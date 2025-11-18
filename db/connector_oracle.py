@@ -108,7 +108,8 @@ SessionLocal = sessionmaker(bind=engine)
 DB_URL = ORACLE_SQLALCHEMY_URL
 
 # Type aliases to match Postgres store expectations
-JSONType = _SAJSON if _SAJSON is not None else Text  # Fallback to Text on dialects without JSON
+# Oracle SQLAlchemy dialect cannot render a native JSON type reliably; use CLOB/Text for JSON content.
+JSONType = Text
 UUIDType = String  # UUIDs stored as VARCHAR2(36) in Oracle backend
 
 class Vector(UserDefinedType):
