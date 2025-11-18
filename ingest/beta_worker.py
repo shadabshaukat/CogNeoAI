@@ -46,7 +46,7 @@ from db.store import (
     start_session, update_session_progress, complete_session, fail_session,
     EmbeddingSessionFile, SessionLocal, Document, Embedding
 )
-from db.connector import DB_URL, engine
+from db.connector import DB_URL, engine, BACKEND
 
 # Timeouts (seconds). Tunable via env.
 PARSE_TIMEOUT = int(os.environ.get("AUSLEGALSEARCH_TIMEOUT_PARSE", "60"))
@@ -734,8 +734,9 @@ def run_worker_pipelined(
         _safe_db = DB_URL
     print(f"[beta_worker] start session={session_name} cwd={os.getcwd()} DB={_safe_db}", flush=True)
     try:
+        ping_sql = "SELECT 1 FROM dual" if BACKEND == "oracle" else "SELECT 1"
         with engine.connect() as _conn:
-            _conn.execute(text("SELECT 1"))
+            _conn.execute(text(ping_sql))
         print("[beta_worker] DB ping OK", flush=True)
     except Exception as _e:
         print(f"[beta_worker] DB ping FAILED: {_e}", flush=True)
@@ -1004,8 +1005,9 @@ def run_worker(
         _safe_db = DB_URL
     print(f"[beta_worker] start (single) session={session_name} cwd={os.getcwd()} DB={_safe_db}", flush=True)
     try:
+        ping_sql = "SELECT 1 FROM dual" if BACKEND == "oracle" else "SELECT 1"
         with engine.connect() as _conn:
-            _conn.execute(text("SELECT 1"))
+            _conn.execute(text(ping_sql))
         print("[beta_worker] DB ping OK", flush=True)
     except Exception as _e:
         print(f"[beta_worker] DB ping FAILED: {_e}", flush=True)

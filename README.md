@@ -62,6 +62,21 @@ export ORACLE_DB_DSN='your_db_high'
 export ORACLE_WALLET_LOCATION='/path/to/wallet/dir'
 ```
 
+Backend switch (Postgres default, Oracle optional):
+```sh
+# Default backend remains Postgres
+export AUSLEGALSEARCH_DB_BACKEND=postgres
+
+# To use Oracle 23ai backend:
+# Either provide a single SQLAlchemy DSN:
+# export ORACLE_SQLALCHEMY_URL='oracle+oracledb://user:pass@myadb_high'
+# Or set individual fields:
+# export ORACLE_DB_USER='...'
+# export ORACLE_DB_PASSWORD='...'
+# export ORACLE_DB_DSN='myadb_high'
+# export ORACLE_WALLET_LOCATION='/path/to/wallet/dir'    # if using an Autonomous DB wallet
+```
+
 Embedding model (defaults are sensible):
 ```sh
 export AUSLEGALSEARCH_EMBED_MODEL='nomic-ai/nomic-embed-text-v1.5'
