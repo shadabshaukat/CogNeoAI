@@ -31,7 +31,10 @@ from urllib.parse import quote_plus
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.types import UserDefinedType, Text
-from sqlalchemy.dialects.oracle import JSON as OracleJSON
+try:
+    from sqlalchemy import JSON as _SAJSON  # SQLAlchemy generic JSON (may map to CLOB on Oracle)
+except Exception:
+    _SAJSON = None
 from sqlalchemy import String
 
 # Minimal .env loader (same behavior as Postgres connector)
@@ -105,7 +108,7 @@ SessionLocal = sessionmaker(bind=engine)
 DB_URL = ORACLE_SQLALCHEMY_URL
 
 # Type aliases to match Postgres store expectations
-JSONType = OracleJSON
+JSONType = _SAJSON if _SAJSON is not None else Text  # Fallback to Text on dialects without JSON
 UUIDType = String  # UUIDs stored as VARCHAR2(36) in Oracle backend
 
 class Vector(UserDefinedType):
