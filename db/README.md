@@ -1,11 +1,11 @@
 # AUSLegalSearch v3 — Database Layer
 
-Relational storage and retrieval for ingestion, search, RAG, and analytics. Uses PostgreSQL with pgvector for embeddings and FTS (tsvector) for document text. Includes connection management, ORM models, schema bootstrap (DDL), search helpers, and an optional Oracle 23ai connector.
+Relational storage and retrieval for ingestion, search, RAG, and analytics. Uses PostgreSQL with pgvector for embeddings and FTS (tsvector) for document text. Includes connection management, ORM models, schema bootstrap (DDL), search helpers, and an optional Oracle Database 26ai connector.
 
 Folder contents
 - connector.py — SQLAlchemy engine and session factory; .env loader; pool/timeouts; pgvector extension helper
 - store.py — ORM models (users, documents, embeddings, sessions, etc.), create_all_tables(), search helpers (vector/BM25/hybrid/FTS)
-- oracle23ai_connector.py — Optional Oracle 23ai connector using python-oracledb for direct Oracle SQL
+- oracle23ai_connector.py — Optional Oracle Database 26ai connector using python-oracledb for direct Oracle SQL
 - test_db_setup.py — Local setup tester (if present)
 - __init__.py — package marker
 
@@ -173,9 +173,9 @@ LIMIT 10;
 ```
 
 
-## Oracle 23ai connector (optional)
+## Oracle Database 26ai connector (optional)
 
-db/oracle23ai_connector.py provides a lightweight connector for Oracle 23ai databases for direct SQL calls, used by FastAPI endpoint /db/oracle23ai_query.
+db/oracle23ai_connector.py provides a lightweight connector for Oracle Database 26ai for direct SQL calls, used by FastAPI endpoint /db/oracle23ai_query.
 
 Environment/params:
 - ORACLE_DB_USER, ORACLE_DB_PASSWORD, ORACLE_DB_DSN

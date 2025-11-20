@@ -1,4 +1,4 @@
-# AUSLegalSearchv3 — Agentic Multi-Faceted Legal AI Platform (Ollama ⬄ OCI GenAI ⬄ Oracle 23ai)
+# AUSLegalSearchv3 — Agentic Multi-Faceted Legal AI Platform (Ollama ⬄ OCI GenAI ⬄ Oracle Database 26ai)
 
 ---
 
@@ -20,7 +20,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 Notes:
-- Requirements include oci and oracledb for full Oracle GenAI and Oracle 23ai DB coverage.
+- Requirements include oci and oracledb for full Oracle GenAI and Oracle Database 26ai DB coverage.
 - pgvector must be installed/enabled on your PostgreSQL target.
 
 3) Configure environment variables
@@ -54,7 +54,7 @@ export OCI_COMPARTMENT_OCID='ocid1.compartment.oc1...'
 export OCI_GENAI_MODEL_OCID='ocid1.generativeaiocid...'
 ```
 
-Oracle 23ai DB integration (optional):
+Oracle Database 26ai DB integration (optional):
 ```sh
 export ORACLE_DB_USER='your_db_user'
 export ORACLE_DB_PASSWORD='your_db_password'
@@ -67,7 +67,7 @@ Backend switch (Postgres default, Oracle optional):
 # Default backend remains Postgres
 export AUSLEGALSEARCH_DB_BACKEND=postgres
 
-# To use Oracle 23ai backend:
+# To use Oracle Database 26ai backend:
 # Either provide a single SQLAlchemy DSN:
 # export ORACLE_SQLALCHEMY_URL='oracle+oracledb://user:pass@myadb_high'
 # Or set individual fields:
@@ -82,6 +82,11 @@ Embedding model (defaults are sensible):
 export AUSLEGALSEARCH_EMBED_MODEL='nomic-ai/nomic-embed-text-v1.5'
 export AUSLEGALSEARCH_EMBED_DIM=768
 export AUSLEGALSEARCH_EMBED_BATCH=64
+```
+
+Domain selection (future‑ready):
+```sh
+export AUSLEGALSEARCH_DOMAIN=legal   # legal | healthcare | telecom | finance | ...
 ```
 
 4) Network and ports
@@ -110,7 +115,8 @@ For production, secure endpoints behind WAF/reverse proxy and TLS. Store secrets
 
 - Ingestion (Beta) Pipeline: [ingest/README.md](ingest/README.md)
 - Embedding Subsystem: [embedding/README.md](embedding/README.md)
-- Database Layer (Postgres + pgvector + FTS + Oracle 23ai connector): [db/README.md](db/README.md)
+- Database Layer (Postgres + pgvector + FTS + Oracle Database 26ai connector): [db/README.md](db/README.md)
+- Multi‑Domain Readiness: [docs/MULTI_DOMAIN_READINESS.md](docs/MULTI_DOMAIN_READINESS.md)
 - RAG Pipelines (Ollama and OCI GenAI): [rag/README.md](rag/README.md)
 - Streamlit UI (Login + Chat): [pages/README.md](pages/README.md)
 - Tools: SQL Latency Benchmark (p50/p95, vector/FTS/metadata, and optimized SQL scenarios): [tools/README-bench-sql-latency.md](tools/README-bench-sql-latency.md)
@@ -135,7 +141,7 @@ Other helpful docs:
 - Retrieval modes
   - Vector (pgvector cosine), BM25-like (ILIKE), Hybrid, FTS (tsvector); metadata-aware filtering and chunk metadata search.
 - Applications
-  - FastAPI REST API for search, RAG, agentic chat, Oracle 23ai proxy.
+  - FastAPI REST API for search, RAG, agentic chat, Oracle Database 26ai proxy.
   - Streamlit chat UI with hybrid retrieval and source cards.
   - Gradio UI for hybrid/vector/OCI GenAI demos.
 
@@ -146,7 +152,7 @@ Other helpful docs:
 - Embeddings
   - Sentence-Transformers primary; HuggingFace AutoModel fallback with mean pooling; configurable batch size and revisions; dimension must match DB.
 - Database
-  - PostgreSQL + pgvector, FTS maintenance via trigger; post-load DDLs surface md_* generated/expression columns for optimized filters; optional Oracle 23ai connector.
+  - PostgreSQL + pgvector, FTS maintenance via trigger; post-load DDLs surface md_* generated/expression columns for optimized filters; optional Oracle Database 26ai connector.
 - RAG
   - Ollama and OCI GenAI pipelines format metadata-rich context and enforce legal-grade prompts; Agentic CoT endpoints exposed via FastAPI.
 - UIs
@@ -177,7 +183,7 @@ Other helpful docs:
                                   |
     +----------+-----------+----------+----------------------------------------+
     |          |           |                                  |          |
-[FastAPI :8000]  [Gradio :7866+]  [Streamlit :8501]    [PGVector/PostgreSQL] [Oracle 23ai DB]
+[FastAPI :8000]  [Gradio :7866+]  [Streamlit :8501]    [PGVector/PostgreSQL] [Oracle Database 26ai]
     |          |           |                                  |          |
     |          |           +---Modern LLM/Cloud UI (Gradio tabs: Hybrid, Chat, OCI GenAI, Agentic)----+ 
     |          +---Multisource LLM-driven Chat, Hybrid Search, OCI GenAI---+                 
