@@ -47,6 +47,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+import json
 
 from tqdm import tqdm
 
@@ -60,6 +61,7 @@ from db.store import (
     start_session, update_session_progress, complete_session, fail_session,
     EmbeddingSessionFile, SessionLocal, Document, Embedding, create_all_tables
 )
+from db.connector import BACKEND
 from embedding.embedder import Embedder
 
 
@@ -170,6 +172,11 @@ def _batch_insert_chunks(
     for idx, chunk in enumerate(chunks):
         text = chunk.get("text", "")
         cm = chunk.get("chunk_metadata") or {}
+        if BACKEND == "oracle" and not isinstance(cm, (str, bytes)):
+            try:
+                cm = json.dumps(cm, ensure_ascii=False)
+            except Exception:
+                cm = str(cm)
         doc = Document(
             source=source_path,
             content=text,

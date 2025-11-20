@@ -30,7 +30,7 @@ from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.types import UserDefinedType, Text
+from sqlalchemy.types import UserDefinedType, Text, TypeDecorator
 try:
     from sqlalchemy import JSON as _SAJSON  # SQLAlchemy generic JSON (may map to CLOB on Oracle)
 except Exception:
@@ -108,8 +108,50 @@ SessionLocal = sessionmaker(bind=engine)
 DB_URL = ORACLE_SQLALCHEMY_URL
 
 # Type aliases to match Postgres store expectations
-# Oracle SQLAlchemy dialect cannot render a native JSON type reliably; use CLOB/Text for JSON content.
-JSONType = Text
+# Use Oracle 26ai native JSON column type for JSON content.
+class OracleJSON(UserDefinedType):
+    cache_ok = True
+
+    def get_col_spec(self, **kw):
+        # Emit native JSON type in DDL
+        return "JSON"
+
+    def bind_processor(self, dialect):
+        def process(value):
+            if value is None:
+                return None
+            if isinstance(value, (dict, list)):
+                try:
+                    return json.dumps(value, ensure_ascii=False)
+                except Exception:
+                    return str(value)
+            if isinstance(value, (bytes, bytearray)):
+                try:
+                    return value.decode("utf-8", "ignore")
+                except Exception:
+                    return str(value)
+            # strings and scalars pass through
+            return value
+        return process
+
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            if value is None:
+                return None
+            if isinstance(value, (bytes, bytearray)):
+                try:
+                    value = value.decode("utf-8", "ignore")
+                except Exception:
+                    value = str(value)
+            if isinstance(value, str) and value and value[0] in ("{", "["):
+                try:
+                    return json.loads(value)
+                except Exception:
+                    return value
+            return value
+        return process
+
+JSONType = OracleJSON
 UUIDType = String  # UUIDs stored as VARCHAR2(36) in Oracle backend
 
 class Vector(UserDefinedType):

@@ -23,7 +23,7 @@ Env:
 """
 
 from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Float, Date
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Float, Date, Identity
 from sqlalchemy import select, text
 from sqlalchemy import String as SAString
 from db.connector_oracle import engine, SessionLocal, Vector, JSONType
@@ -32,6 +32,7 @@ import uuid
 import os
 import bcrypt
 from typing import Any, Dict, List
+import json as _json
 
 # Compatibility aliases so external imports from db.store remain unchanged
 JSONB = JSONType
@@ -42,9 +43,30 @@ EMBEDDING_DIM = int(os.environ.get("AUSLEGALSEARCH_EMBED_DIM", "768"))
 
 Base = declarative_base()
 
+def _json_text(val):
+    if val is None:
+        return None
+    if isinstance(val, (dict, list)):
+        try:
+            return _json.dumps(val, ensure_ascii=False)
+        except Exception:
+            return str(val)
+    if isinstance(val, bytes):
+        try:
+            return val.decode("utf-8", "ignore")
+        except Exception:
+            return str(val)
+    if isinstance(val, str):
+        return val
+    # Fallback: best-effort JSON serialization for other Python types
+    try:
+        return _json.dumps(val, ensure_ascii=False)
+    except Exception:
+        return str(val)
+
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, Identity(), primary_key=True)
     email = Column(String(320), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=True)
     registered_google = Column(Boolean, default=False)
@@ -55,14 +77,14 @@ class User(Base):
 
 class Document(Base):
     __tablename__ = "documents"
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, Identity(), primary_key=True)
     source = Column(String(1024), nullable=False)
     content = Column(Text, nullable=False)
     format = Column(String(64), nullable=False)
 
 class Embedding(Base):
     __tablename__ = "embeddings"
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, Identity(), primary_key=True)
     doc_id = Column(Integer, ForeignKey('documents.id'), index=True)
     chunk_index = Column(Integer, nullable=False)
     vector = Column(Vector(EMBEDDING_DIM), nullable=False)  # Oracle 26ai native VECTOR(dim, FLOAT32, DENSE)
@@ -71,7 +93,7 @@ class Embedding(Base):
 
 class EmbeddingSession(Base):
     __tablename__ = "embedding_sessions"
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, Identity(), primary_key=True)
     session_name = Column(String(200), unique=True, nullable=False)
     directory = Column(String(1024), nullable=False)
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -85,7 +107,7 @@ class EmbeddingSession(Base):
 
 class EmbeddingSessionFile(Base):
     __tablename__ = "embedding_session_files"
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, Identity(), primary_key=True)
     session_name = Column(String(200), nullable=False, index=True)
     filepath = Column(String(2048), nullable=False)
     status = Column(String(32), nullable=False, default="pending")
@@ -104,7 +126,7 @@ class ChatSession(Base):
 
 class ConversionFile(Base):
     __tablename__ = "conversion_files"
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, Identity(), primary_key=True)
     session_name = Column(String(200), nullable=False, index=True)
     src_file = Column(String(2048), nullable=False)
     dst_file = Column(String(2048), nullable=False)
@@ -118,7 +140,7 @@ class ConversionFile(Base):
 
 class Case(Base):
     __tablename__ = "cases"
-    case_id = Column(Integer, primary_key=True)
+    case_id = Column(Integer, Identity(), primary_key=True)
     url = Column(String(2048), nullable=True)
     jurisdiction = Column(String(32), nullable=True)
     subjurisdiction = Column(String(32), nullable=True)
@@ -127,19 +149,19 @@ class Case(Base):
 
 class CaseName(Base):
     __tablename__ = "case_names"
-    case_name_id = Column(Integer, primary_key=True)
+    case_name_id = Column(Integer, Identity(), primary_key=True)
     case_id = Column(Integer, ForeignKey('cases.case_id'), nullable=False, index=True)
     name = Column(Text, nullable=False)
 
 class CaseCitationRef(Base):
     __tablename__ = "case_citation_refs"
-    citation_ref_id = Column(Integer, primary_key=True)
+    citation_ref_id = Column(Integer, Identity(), primary_key=True)
     case_id = Column(Integer, ForeignKey('cases.case_id'), nullable=False, index=True)
     citation = Column(Text, nullable=False)
 
 class Legislation(Base):
     __tablename__ = "legislation"
-    legislation_id = Column(Integer, primary_key=True)
+    legislation_id = Column(Integer, Identity(), primary_key=True)
     url = Column(String(2048), nullable=True)
     jurisdiction = Column(String(32), nullable=True)
     subjurisdiction = Column(String(32), nullable=True)
@@ -150,7 +172,7 @@ class Legislation(Base):
 
 class LegislationSection(Base):
     __tablename__ = "legislation_sections"
-    section_id = Column(Integer, primary_key=True)
+    section_id = Column(Integer, Identity(), primary_key=True)
     legislation_id = Column(Integer, ForeignKey('legislation.legislation_id'), nullable=False, index=True)
     identifier = Column(String(64), nullable=True)  # e.g., "288", "1.5.1"
     type = Column(String(32), nullable=True)        # e.g., "regulation", "schedule", "section"
@@ -161,7 +183,7 @@ class LegislationSection(Base):
 
 class Journal(Base):
     __tablename__ = "journals"
-    journal_id = Column(Integer, primary_key=True)
+    journal_id = Column(Integer, Identity(), primary_key=True)
     url = Column(String(2048), nullable=True)
     jurisdiction = Column(String(32), nullable=True)
     subjurisdiction = Column(String(32), nullable=True)
@@ -172,13 +194,13 @@ class Journal(Base):
 
 class JournalAuthor(Base):
     __tablename__ = "journal_authors"
-    journal_author_id = Column(Integer, primary_key=True)
+    journal_author_id = Column(Integer, Identity(), primary_key=True)
     journal_id = Column(Integer, ForeignKey('journals.journal_id'), nullable=False, index=True)
     name = Column(Text, nullable=False)
 
 class JournalCitationRef(Base):
     __tablename__ = "journal_citation_refs"
-    citation_ref_id = Column(Integer, primary_key=True)
+    citation_ref_id = Column(Integer, Identity(), primary_key=True)
     journal_id = Column(Integer, ForeignKey('journals.journal_id'), nullable=False, index=True)
     citation = Column(Text, nullable=False)
 
@@ -186,7 +208,7 @@ class JournalCitationRef(Base):
 
 class Treaty(Base):
     __tablename__ = "treaties"
-    treaty_id = Column(Integer, primary_key=True)
+    treaty_id = Column(Integer, Identity(), primary_key=True)
     url = Column(String(2048), nullable=True)
     jurisdiction = Column(String(32), nullable=True)
     subjurisdiction = Column(String(32), nullable=True)
@@ -197,19 +219,28 @@ class Treaty(Base):
 
 class TreatyCountry(Base):
     __tablename__ = "treaty_countries"
-    treaty_country_id = Column(Integer, primary_key=True)
+    treaty_country_id = Column(Integer, Identity(), primary_key=True)
     treaty_id = Column(Integer, ForeignKey('treaties.treaty_id'), nullable=False, index=True)
     country = Column(String(128), nullable=False)
 
 class TreatyCitationRef(Base):
     __tablename__ = "treaty_citation_refs"
-    citation_ref_id = Column(Integer, primary_key=True)
+    citation_ref_id = Column(Integer, Identity(), primary_key=True)
     treaty_id = Column(Integer, ForeignKey('treaties.treaty_id'), nullable=False, index=True)
     citation = Column(Text, nullable=False)
 
 def create_all_tables():
-    # Create core tables
-    Base.metadata.create_all(engine)
+    # Create only core tables for Oracle; skip relational normalization by default
+    core_tables = [
+        User.__table__,
+        Document.__table__,
+        Embedding.__table__,
+        EmbeddingSession.__table__,
+        EmbeddingSessionFile.__table__,
+        ChatSession.__table__,
+        ConversionFile.__table__,
+    ]
+    Base.metadata.create_all(engine, tables=core_tables)
 
     # Optional: auto-create Oracle 26ai VECTOR index for embeddings.vector
     # Guarded by AUSLEGALSEARCH_ORA_AUTO_VECTOR_INDEX=1
@@ -270,6 +301,56 @@ def create_all_tables():
         except Exception as e:
             print(f"[Oracle] Vector index creation skipped: {e}")
 
+    # Ensure Oracle PK auto-numbering for existing schemas (embedding_sessions)
+    # Try identity; if not available or fails, create sequence + trigger fallback.
+    begin_plsql_sql = """
+    BEGIN
+      -- Attempt to convert to IDENTITY (23c/26ai); ignore if not supported or already identity
+      BEGIN
+        EXECUTE IMMEDIATE 'ALTER TABLE EMBEDDING_SESSIONS MODIFY (ID GENERATED BY DEFAULT AS IDENTITY)';
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END;
+
+      -- If still not identity, create sequence/trigger fallback
+      DECLARE
+        v_is_identity NUMBER := 0;
+        v_cnt NUMBER := 0;
+      BEGIN
+        SELECT COUNT(*) INTO v_is_identity
+          FROM USER_TAB_COLS
+         WHERE TABLE_NAME = 'EMBEDDING_SESSIONS'
+           AND COLUMN_NAME = 'ID'
+           AND NVL(IDENTITY_COLUMN, 'NO') = 'YES';
+
+        IF v_is_identity = 0 THEN
+          SELECT COUNT(*) INTO v_cnt FROM USER_SEQUENCES WHERE SEQUENCE_NAME = 'EMBEDDING_SESSIONS_SEQ';
+          IF v_cnt = 0 THEN
+            EXECUTE IMMEDIATE 'CREATE SEQUENCE EMBEDDING_SESSIONS_SEQ START WITH 1 INCREMENT BY 1';
+          END IF;
+
+          SELECT COUNT(*) INTO v_cnt FROM USER_TRIGGERS WHERE TRIGGER_NAME = 'EMBEDDING_SESSIONS_BI';
+          IF v_cnt = 0 THEN
+            EXECUTE IMMEDIATE q'[
+              CREATE OR REPLACE TRIGGER EMBEDDING_SESSIONS_BI
+              BEFORE INSERT ON EMBEDDING_SESSIONS
+              FOR EACH ROW
+              WHEN (NEW.ID IS NULL)
+              BEGIN
+                SELECT EMBEDDING_SESSIONS_SEQ.NEXTVAL INTO :NEW.ID FROM DUAL;
+              END;
+            ]';
+          END IF;
+        END IF;
+      END;
+    END;
+    """
+    try:
+        with engine.begin() as conn:
+            # Use exec_driver_sql to avoid SQLAlchemy treating :NEW as a bind param
+            conn.exec_driver_sql(begin_plsql_sql)
+    except Exception as e:
+        print(f"[Oracle] PK autoincrement ensure (embedding_sessions) skipped: {e}")
+
 # --- User CRUD and Auth logic ---
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -312,8 +393,8 @@ def get_user_by_googleid(google_id: str):
 def save_chat_session(chat_history, llm_params, ended_at=None, username=None, question=None):
     with SessionLocal() as session:
         chat_sess = ChatSession(
-            chat_history=chat_history,
-            llm_params=llm_params,
+            chat_history=_json_text(chat_history),
+            llm_params=_json_text(llm_params),
             ended_at=ended_at or datetime.utcnow(),
             username=username,
             question=question
@@ -405,7 +486,7 @@ def add_embedding(doc_id: int, chunk_index: int, vector, chunk_metadata=None) ->
             doc_id=doc_id,
             chunk_index=chunk_index,
             vector=vector,
-            chunk_metadata=chunk_metadata,
+            chunk_metadata=_json_text(chunk_metadata),
         )
         session.add(embed_obj)
         session.commit()
@@ -447,20 +528,22 @@ def search_vector(query_vec, top_k=5):
     except Exception:
         seq = []
     qv_text = "[" + ",".join(str(float(v)) for v in seq) + "]"
-    order_expr = "APPROX vector_distance(e.vector, :qv)" if approx else "vector_distance(e.vector, :qv)"
+    order_expr = "vector_distance(e.vector, :qv)"
 
     sql = f"""
-        SELECT e.doc_id,
-               e.chunk_index,
-               {order_expr} AS score,
-               d.content,
-               d.source,
-               d.format,
-               e.chunk_metadata
-          FROM embeddings e
-          JOIN documents d ON e.doc_id = d.id
-         ORDER BY {order_expr}
-         FETCH FIRST :topk ROWS ONLY
+        SELECT * FROM (
+            SELECT e.doc_id,
+                   e.chunk_index,
+                   {order_expr} AS score,
+                   d.content,
+                   d.source,
+                   d.format,
+                   e.chunk_metadata
+              FROM embeddings e
+              JOIN documents d ON e.doc_id = d.id
+             ORDER BY {order_expr}
+        ) 
+        WHERE ROWNUM <= :topk
     """
     with SessionLocal() as session:
         rows = session.execute(text(sql), {"qv": qv_text, "topk": int(top_k)}).fetchall()
@@ -586,7 +669,7 @@ def search_fts(query, top_k=10, mode="both"):
                 SELECT e.doc_id, e.chunk_index, d.source, d.content, e.chunk_metadata
                   FROM embeddings e
                   JOIN documents d ON e.doc_id = d.id
-                 WHERE LOWER(e.chunk_metadata) LIKE :q
+                 WHERE LOWER(JSON_SERIALIZE(e.chunk_metadata RETURNING CLOB)) LIKE :q
                  FETCH FIRST :topk ROWS ONLY
             """)
             chunk_rows = session.execute(chunk_sql, {"q": q, "topk": int(top_k*8)}).fetchall()

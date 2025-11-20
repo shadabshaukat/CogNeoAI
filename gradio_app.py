@@ -623,10 +623,15 @@ with gr.Blocks(title="AUSLegalSearch RAG UI", css="""
                     for hit in results:
                         url = None
                         meta = {}
-                        try:
-                            if hit.get('chunk_metadata'):
-                                meta = json.loads(hit.get('chunk_metadata',''))
-                        except Exception:
+                        val = hit.get('chunk_metadata')
+                        if isinstance(val, dict):
+                            meta = val
+                        elif isinstance(val, str):
+                            try:
+                                meta = json.loads(val)
+                            except Exception:
+                                meta = {}
+                        else:
                             meta = {}
                         url = meta.get('url')
                         if url:

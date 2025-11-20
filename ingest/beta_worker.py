@@ -183,6 +183,11 @@ def _batch_insert_chunks(
     for idx, chunk in enumerate(chunks):
         text = chunk.get("text", "")
         cm = chunk.get("chunk_metadata") or {}
+        if BACKEND == "oracle" and not isinstance(cm, (str, bytes)):
+            try:
+                cm = json.dumps(cm, ensure_ascii=False)
+            except Exception:
+                cm = str(cm)
         doc = Document(
             source=source_path,
             content=text,
