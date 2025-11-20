@@ -1,9 +1,0 @@
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Ravbar v Commonwealth of Australia - 25.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Commissioner of Taxation v PepsiCo Inc - 30.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/MDP v The King - 24.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Naaman v Jaken Properties Australia Pty Limited - 1.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/New South Wales v Wojciechowska - 27.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Forestry Corporation of New South Wales v South East Forest Rescue Incorporated - 15.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Evans v Air Canada - 22.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/DZY a pseudonym v Trustees of the Christian Brothers - 16.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Plaintiff M19A-2024 v Minister for Immigration and Multicultural Affairs - 17.txt

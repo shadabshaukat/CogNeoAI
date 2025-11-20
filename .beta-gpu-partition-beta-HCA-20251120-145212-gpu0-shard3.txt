@@ -1,9 +1,0 @@
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Babet v Commonwealth of Australia - 21.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/La Perouse Local Aboriginal Land Council v Quarry Street Pty Ltd - 32.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Minister for Immigration and Multicultural Affairs v MZAPC - 5.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/CZA19 v Commonwealth of Australia - 8.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Australian Competition and Consumer Commission v J Hutchinson Pty Ltd - 10.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/The King v ZT - 9.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Valuer-General Victoria v WSTI Properties 490 SKR Pty Ltd - 23.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/Brawn v The King - 20.txt
-/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA/2025/KMD v CEO Department of Health NT - 4.txt
