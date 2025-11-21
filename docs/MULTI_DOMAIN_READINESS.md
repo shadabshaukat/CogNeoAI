@@ -2,7 +2,7 @@
 
 Status: Proposal/architecture only. No multi‑domain code changes have been implemented. This document is a deep‑dive strategic outline for a future platform approach and is intended for review and alignment before any implementation.
 
-This document outlines how AUSLegalSearch can generalize into a multi‑industry/domain RAG/Agentic AI search platform (health, telecom, finance/banking, etc.) with minimal changes to the core.
+This document outlines how CogNeo can generalize into a multi‑industry/domain RAG/Agentic AI search platform (health, telecom, finance/banking, etc.) with minimal changes to the core.
 
 ## Goals
 
@@ -14,7 +14,7 @@ This document outlines how AUSLegalSearch can generalize into a multi‑industry
 ## Current Separation (Already Implemented)
 
 - Backend dispatchers:
-  - `db/connector.py` and `db/store.py` autoload `.env` and pick backend by `AUSLEGALSEARCH_DB_BACKEND` (`postgres` default, `oracle` optional).
+  - `db/connector.py` and `db/store.py` autoload `.env` and pick backend by `COGNEO_DB_BACKEND` (`postgres` default, `oracle` optional).
   - Postgres codepaths: `db/connector_postgres.py`, `db/store_postgres.py` (pgvector + JSONB + tsvector).
   - Oracle codepaths: `db/connector_oracle.py`, `db/store_oracle.py` (native `VECTOR` + native `JSON`, `vector_distance`, JSON_SERIALIZE for JSON LIKE).
 - Ingestion pipeline (beta):
@@ -52,14 +52,14 @@ ingest/
 Add one environment var to select the domain pack at runtime (defaults to `legal`):
 
 ```
-AUSLEGALSEARCH_DOMAIN=legal        # legal | healthcare | telecom | finance | ...
+COGNEO_DOMAIN=legal        # legal | healthcare | telecom | finance | ...
 ```
 
 Worker/orchestrator dispatch:
 
 ```python
 # Pseudocode inside ingest.beta_worker / ingest.beta_ingest
-domain = os.environ.get("AUSLEGALSEARCH_DOMAIN", "legal")
+domain = os.environ.get("COGNEO_DOMAIN", "legal")
 if domain == "healthcare":
     from ingest.domains.healthcare.chunkers import detect_doc_type as _detect, chunk_document as _chunk
 elif domain == "telecom":
@@ -99,15 +99,15 @@ file_chunks = _chunk(base_doc["text"], base_meta=base_meta, cfg=cfg)
 
 ```
 # Backend database selection (kept)
-AUSLEGALSEARCH_DB_BACKEND=postgres | oracle
+COGNEO_DB_BACKEND=postgres | oracle
 
 # Domain pack selection (new)
-AUSLEGALSEARCH_DOMAIN=legal           # legal|healthcare|telecom|finance|...
+COGNEO_DOMAIN=legal           # legal|healthcare|telecom|finance|...
 
 # Ingestion/embedding (existing)
-AUSLEGALSEARCH_EMBED_MODEL=nomic-ai/nomic-embed-text-v1.5
-AUSLEGALSEARCH_EMBED_DIM=768
-AUSLEGALSEARCH_EMBED_BATCH=64
+COGNEO_EMBED_MODEL=nomic-ai/nomic-embed-text-v1.5
+COGNEO_EMBED_DIM=768
+COGNEO_EMBED_BATCH=64
 ```
 
 ## Migration Path
@@ -194,7 +194,7 @@ This section captures a “platform at scale” approach — how a billion‑dol
 ### Configuration and rollout
 
 - Runtime configuration
-  - AUSLEGALSEARCH_DB_BACKEND, AUSLEGALSEARCH_DOMAIN, feature flags (e.g., RAG_STRICT_CITATION, ENABLE_ORACLE_TEXT).
+  - COGNEO_DB_BACKEND, COGNEO_DOMAIN, feature flags (e.g., RAG_STRICT_CITATION, ENABLE_ORACLE_TEXT).
 - Progressive delivery
   - Env‑scoped flags (dev/stage/prod), canary cohorts, and rollback levers; config stored centrally (e.g., Consul/ConfigMap/Secrets Manager).
 

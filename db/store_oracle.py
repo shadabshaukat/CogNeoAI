@@ -1,5 +1,5 @@
 """
-Oracle backend: Centralized DB models and ORM for auslegalsearchv3.
+Oracle backend: Centralized DB models and ORM for cogneo.
 - Uses Oracle 26ai VECTOR data type for embeddings: Column(Vector(EMBEDDING_DIM)) -> VECTOR(dim, FLOAT32, DENSE)
 - SQL-side similarity with vector_distance(), optional APPROX to leverage HNSW/IVF indexes.
 - LIKE-based fallbacks for simple text search; Oracle Text can be added later if desired.
@@ -10,16 +10,16 @@ Notes:
 - Optional auto-index creation via DBMS_VECTOR.CREATE_INDEX (env gated).
 
 Env:
-- AUSLEGALSEARCH_EMBED_DIM (default 768)
-- AUSLEGALSEARCH_ORA_APPROX=1           # use APPROX vector_distance() to enable index usage
-- AUSLEGALSEARCH_ORA_AUTO_VECTOR_INDEX=0|1
-- AUSLEGALSEARCH_ORA_INDEX_TYPE=HNSW|IVF
-- AUSLEGALSEARCH_ORA_DISTANCE=COSINE|EUCLIDEAN|EUCLIDEAN_SQUARED|DOT|MANHATTAN|HAMMING
-- AUSLEGALSEARCH_ORA_ACCURACY=90        # target accuracy for approximate search
-- AUSLEGALSEARCH_ORA_INDEX_PARALLEL=1   # parallelism for index build
-- AUSLEGALSEARCH_ORA_HNSW_NEIGHBORS=16
-- AUSLEGALSEARCH_ORA_HNSW_EFCONSTRUCTION=200
-- AUSLEGALSEARCH_ORA_IVF_PARTITIONS=100
+- COGNEO_EMBED_DIM (default 768)
+- COGNEO_ORA_APPROX=1           # use APPROX vector_distance() to enable index usage
+- COGNEO_ORA_AUTO_VECTOR_INDEX=0|1
+- COGNEO_ORA_INDEX_TYPE=HNSW|IVF
+- COGNEO_ORA_DISTANCE=COSINE|EUCLIDEAN|EUCLIDEAN_SQUARED|DOT|MANHATTAN|HAMMING
+- COGNEO_ORA_ACCURACY=90        # target accuracy for approximate search
+- COGNEO_ORA_INDEX_PARALLEL=1   # parallelism for index build
+- COGNEO_ORA_HNSW_NEIGHBORS=16
+- COGNEO_ORA_HNSW_EFCONSTRUCTION=200
+- COGNEO_ORA_IVF_PARTITIONS=100
 """
 
 from sqlalchemy.orm import declarative_base, relationship
@@ -39,7 +39,7 @@ JSONB = JSONType
 UUIDType = SAString  # UUID stored as VARCHAR2(36)
 
 # Production: avoid loading ML models at import-time in DB module.
-EMBEDDING_DIM = int(os.environ.get("AUSLEGALSEARCH_EMBED_DIM", "768"))
+EMBEDDING_DIM = int(os.environ.get("COGNEO_EMBED_DIM", "768"))
 
 Base = declarative_base()
 
@@ -243,26 +243,26 @@ def create_all_tables():
     Base.metadata.create_all(engine, tables=core_tables)
 
     # Optional: auto-create Oracle 26ai VECTOR index for embeddings.vector
-    # Guarded by AUSLEGALSEARCH_ORA_AUTO_VECTOR_INDEX=1
-    if os.environ.get("AUSLEGALSEARCH_ORA_AUTO_VECTOR_INDEX", "0") == "1":
-        idx_name = os.environ.get("AUSLEGALSEARCH_ORA_INDEX_NAME", "IDX_EMBED_VECTOR")
-        idx_type = (os.environ.get("AUSLEGALSEARCH_ORA_INDEX_TYPE", "HNSW") or "HNSW").upper()  # HNSW | IVF
+    # Guarded by COGNEO_ORA_AUTO_VECTOR_INDEX=1
+    if os.environ.get("COGNEO_ORA_AUTO_VECTOR_INDEX", "0") == "1":
+        idx_name = os.environ.get("COGNEO_ORA_INDEX_NAME", "IDX_EMBED_VECTOR")
+        idx_type = (os.environ.get("COGNEO_ORA_INDEX_TYPE", "HNSW") or "HNSW").upper()  # HNSW | IVF
         org = "INMEMORY NEIGHBOR GRAPH" if idx_type == "HNSW" else "NEIGHBOR PARTITIONS"
-        metric = (os.environ.get("AUSLEGALSEARCH_ORA_DISTANCE", "COSINE") or "COSINE").upper()
-        acc = int(os.environ.get("AUSLEGALSEARCH_ORA_ACCURACY", "90"))
-        par = int(os.environ.get("AUSLEGALSEARCH_ORA_INDEX_PARALLEL", "1"))
+        metric = (os.environ.get("COGNEO_ORA_DISTANCE", "COSINE") or "COSINE").upper()
+        acc = int(os.environ.get("COGNEO_ORA_ACCURACY", "90"))
+        par = int(os.environ.get("COGNEO_ORA_INDEX_PARALLEL", "1"))
 
         params = {}
         if idx_type == "HNSW":
             params = {
                 "type": "HNSW",
-                "neighbors": int(os.environ.get("AUSLEGALSEARCH_ORA_HNSW_NEIGHBORS", "16")),
-                "efConstruction": int(os.environ.get("AUSLEGALSEARCH_ORA_HNSW_EFCONSTRUCTION", "200")),
+                "neighbors": int(os.environ.get("COGNEO_ORA_HNSW_NEIGHBORS", "16")),
+                "efConstruction": int(os.environ.get("COGNEO_ORA_HNSW_EFCONSTRUCTION", "200")),
             }
         else:
             params = {
                 "type": "IVF",
-                "partitions": int(os.environ.get("AUSLEGALSEARCH_ORA_IVF_PARTITIONS", "100")),
+                "partitions": int(os.environ.get("COGNEO_ORA_IVF_PARTITIONS", "100")),
             }
         import json as _json
         params_json = _json.dumps(params)
@@ -519,9 +519,9 @@ def search_vector(query_vec, top_k=5):
     to enable HNSW/IVF vector index usage when present.
 
     Env:
-      - AUSLEGALSEARCH_ORA_APPROX=1 (default) to use APPROX keyword for index
+      - COGNEO_ORA_APPROX=1 (default) to use APPROX keyword for index
     """
-    approx = os.environ.get("AUSLEGALSEARCH_ORA_APPROX", "1") == "1"
+    approx = os.environ.get("COGNEO_ORA_APPROX", "1") == "1"
     # Prepare dense textual literal for the bind (e.g., "[1.0,2.0,...]")
     try:
         seq = query_vec.tolist() if hasattr(query_vec, "tolist") else list(query_vec or [])

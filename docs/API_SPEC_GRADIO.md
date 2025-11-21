@@ -1,4 +1,4 @@
-# AUSLegalSearchv3 REST API Specification
+# CogNeo REST API Specification
 **For any frontend, including advanced Gradio UIs, to consume backend model search & chat services**
 
 ## Authentication

@@ -1,8 +1,8 @@
 """
-DB connector dispatcher for AUSLegalSearch v3.
+DB connector dispatcher for CogNeo v3.
 
 Selects the concrete connector at import-time based on environment:
-  AUSLEGALSEARCH_DB_BACKEND=postgres | oracle
+  COGNEO_DB_BACKEND=postgres | oracle
 Default is 'postgres' to preserve current behavior.
 
 Re-exports a stable surface:
@@ -42,7 +42,7 @@ def _load_dotenv_file():
 # Load .env before reading backend selector (helps when running ingest/* via python -m)
 _load_dotenv_file()
 
-_BACKEND = (_os.environ.get("AUSLEGALSEARCH_DB_BACKEND", "postgres") or "postgres").lower()
+_BACKEND = (_os.environ.get("COGNEO_DB_BACKEND", "postgres") or "postgres").lower()
 
 if _BACKEND in ("oracle", "ora", "oracle23ai"):
     # Oracle backend (python-oracledb via SQLAlchemy)

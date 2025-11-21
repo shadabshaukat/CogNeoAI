@@ -1,17 +1,26 @@
 """
-AUSLegalSearchv2 – Legal Assistant Chat (Full RAG Chatbot Experience)
-Enhanced: Top 10 retrieved chunks shown with clickable URL header, all metadata, score, and cleaner cards.
+CogNeo — Chat (Conversation RAG with Streaming and Session History)
+- ChatGPT-like interface with per-user login gate
+- Streaming RAG via FastAPI (/search/rag_stream) for Local Ollama
+- OCI GenAI and AWS Bedrock support (non-streaming) via FastAPI endpoints
+- Conversation history persisted to DB (both Postgres and Oracle supported via db.store)
 """
 
-import streamlit as st
-from db.store import search_vector, search_bm25, get_file_contents, save_chat_session
-from embedding.embedder import Embedder
-from rag.rag_pipeline import RAGPipeline, list_ollama_models
-from datetime import datetime, timezone
+import os
+import json
 import time
 import uuid
+import requests
+import streamlit as st
+from datetime import datetime, timezone
+from rag.rag_pipeline import list_ollama_models
 
-# AUTH WALL: force login if no session, always at top
+# DB facade (env-dispatched: postgres/oracle)
+from db.store import (
+    save_chat_session, get_chat_session, SessionLocal, ChatSession  # ChatSession exported by db.store.*
+)
+
+# AUTH WALL
 if "user" not in st.session_state:
     st.warning("You must login to continue.")
     if hasattr(st, "switch_page"):
@@ -19,228 +28,398 @@ if "user" not in st.session_state:
     else:
         st.stop()
 
-st.set_page_config(page_title="Legal Assistant Chat", layout="wide")
+st.set_page_config(page_title="CogNeo Chat", layout="wide")
 
-st.markdown("""
-<style>
-.user-bubble { background: #e3f2fd; border-radius: 18px; padding: 14px 18px 14px 16px; margin: 10px 0 3px 0; min-width: 32px; max-width: 870px; }
-.llm-bubble  { background: #f4f7fe; border-radius: 10px 22px 18px 10px; padding: 14px 16px 14px 20px; margin: 3px 0 12px 18px; min-width: 32px; max-width: 860px; }
-.code-pop    { font-family: monospace; font-size:0.94em; background:#232345; color:#d7ffff; border-radius:7px; padding:10px 14px 8px 12px; }
-.retr-chunk-card{ border-radius: 8px; border: 1.9px solid #bdd2eb; background: #f7fafd; margin:16px 0 12px 0; padding:13px 19px 10px 20px; }
-.chunk-header-link{ font-size:1.18em; font-weight: 600; color:#2057a6; text-decoration:underline; margin-bottom:6px; }
-.chunk-metadata{ color:#274052; font-size:0.99em; margin: 4px 0 7px 0; }
-.chunk-score{ color:#46807a; font-size:0.98em; margin: 4px 0 3px 0; font-weight:600;}
-.chunk-body{ font-family:monospace; font-size:0.98em; margin:7px 0 3px 0; background:#eef4f9; border-left:4px solid #bcdffc; border-radius:4px; padding:9px 14px;}
-.streaming {color:#3994c2;font-size:1.09em;}
-.session-line { color: #566787; font-size: 0.97em; margin-top: 12px; margin-bottom: 10px !important;}
-</style>
-""", unsafe_allow_html=True)
+API_ROOT = os.environ.get("COGNEO_API_URL", "http://localhost:8000")
+AUTH_TUPLE = (os.environ.get("FASTAPI_API_USER", "legal_api"), os.environ.get("FASTAPI_API_PASS", "letmein"))
 
-st.markdown("""
-<div style='display: flex; align-items: center; gap: 16px;'>
-  <span style='font-size: 2em;'>🤖</span>
-  <span style='font-size: 1.51em; font-weight:700;'>Legal Assistant Chat</span>
-</div>
-<p style='margin-bottom:1.75em;color:#357bb5;font-weight:500;'>
-Memory-based chat with Retrieval Augmented Generation over the entire legal corpus – grounded, cited, ready for lawyers.
-</p>
-""", unsafe_allow_html=True)
+LEGAL_SYSTEM_PROMPT = """You are an expert Australian legal research and compliance AI assistant.
+Answer strictly from the provided sources and context. Always cite the source section/citation for every statement. If you do not know the answer from the context, reply: "Not found in the provided legal documents."
+When summarizing, be neutral and factual. Never invent legal advice."""
 
-if "chat_history" not in st.session_state:
-    st.session_state["chat_history"] = []
-
-if "custom_prompt" not in st.session_state:
-    st.session_state["custom_prompt"] = (
-        "You are a legal research assistant. Always answer based ONLY on the provided sources, and cite sources explicitly."
-        " If you have no evidence, reply 'No factual source found.' Use clear, lawyer-friendly drafting and never speculate."
-    )
-
+# State init
+if "chat_msgs" not in st.session_state:
+    st.session_state["chat_msgs"] = []   # list of {"role":"user|assistant", "content": str}
 if "chat_session_id" not in st.session_state:
     st.session_state["chat_session_id"] = str(uuid.uuid4())
 if "session_started_at" not in st.session_state:
     st.session_state["session_started_at"] = datetime.now(timezone.utc).isoformat()
+if "chat_top_k" not in st.session_state:
+    st.session_state["chat_top_k"] = 10
+if "llm_temperature" not in st.session_state:
+    st.session_state["llm_temperature"] = 0.1
+if "llm_top_p" not in st.session_state:
+    st.session_state["llm_top_p"] = 0.9
+if "llm_max_tokens" not in st.session_state:
+    st.session_state["llm_max_tokens"] = 1024
+if "llm_repeat_penalty" not in st.session_state:
+    st.session_state["llm_repeat_penalty"] = 1.1
 
-model_list = list_ollama_models()
-selected_model = st.sidebar.selectbox("LLM for RAG", model_list, index=0) if model_list else "llama3"
-embedder = Embedder()
+# UI styles
+st.markdown("""
+<style>
+.chat-ct { max-width: 900px; margin: 0 auto; }
+.user-bubble { background: #eef5ff; border-radius: 16px; padding: 12px 16px; margin: 8px 0; border-left: 4px solid #6aa4f5; }
+.assistant-bubble { background: #f6fff4; border-radius: 16px; padding: 12px 16px; margin: 8px 0; border-left: 4px solid #78c97a; }
+.streaming { color:#2f6ebd; font-size:1.05em; }
+.sidebar-caption { color:#6b7a85; font-size: 0.94em; }
+.session-item { font-size: 0.92em; }
+</style>
+""", unsafe_allow_html=True)
 
-with st.sidebar:
-    st.markdown("#### Session")
-    session_id = st.session_state["chat_session_id"]
-    started = st.session_state["session_started_at"]
-    st.markdown(f"<span class='session-line'>Session ID:<br><b>{session_id}</b><br>Start: <b>{started.split('.')[0].replace('T', ' ')}</b></span>", unsafe_allow_html=True)
-    if st.button("Start New Chat Session"):
-        # Capture username as string (use email) and first user question in history
+# Helpers
+def list_recent_chat_sessions(limit=10):
+    """List most recent chat sessions from DB with a preview of the first user question."""
+    out = []
+    try:
+        with SessionLocal() as s:
+            q = s.query(ChatSession).order_by(ChatSession.started_at.desc())
+            if hasattr(q, "limit"):
+                q = q.limit(limit)
+            rows = q.all()
+            for r in rows:
+                # started timestamp
+                try:
+                    started = r.started_at.isoformat() if r.started_at else ""
+                except Exception:
+                    started = str(r.started_at)
+                # preview: prefer explicit question column, else parse first user turn from chat_history JSON
+                preview = ""
+                try:
+                    if getattr(r, "question", None):
+                        preview = str(r.question)
+                    else:
+                        hist = getattr(r, "chat_history", None)
+                        if isinstance(hist, (str, bytes)):
+                            try:
+                                hist = json.loads(hist)
+                            except Exception:
+                                hist = []
+                        if isinstance(hist, list):
+                            for msg in hist:
+                                if isinstance(msg, dict) and msg.get("role") == "user" and msg.get("content"):
+                                    preview = str(msg.get("content"))[:60]
+                                    break
+                except Exception:
+                    preview = ""
+                if not preview:
+                    preview = "(no question)"
+                out.append({
+                    "id": r.id,
+                    "started_at": started or "",
+                    "username": getattr(r, "username", None) or "",
+                    "title": preview
+                })
+    except Exception as e:
+        # If anything blows up, return empty list, we won't break the chat page
+        print(f"[chat] list_recent_chat_sessions error: {e}")
+    return out
+
+def build_history_prompt(max_turns=10):
+    """
+    Build a compact transcript from the last N turns to preserve conversational context.
+    One turn = User + Assistant. Use only text (omit citations list).
+    """
+    msgs = st.session_state.get("chat_msgs", [])
+    # Extract last 2*max_turns messages (user+assistant pairs)
+    tail = msgs[-2*max_turns:] if len(msgs) > 0 else []
+    lines = []
+    for m in tail:
+        role = m.get("role")
+        if role == "user":
+            lines.append(f"User: {m.get('content','')}")
+        elif role == "assistant":
+            # Use only assistant content; ignore citations block if present
+            content = m.get("content","")
+            lines.append(f"Assistant: {content}")
+    return "\n".join(lines)
+
+def extract_citations(hits, max_cites=10):
+    """
+    From hybrid hits, compile up to 10 citation strings: prefer URL, fallback to source/citation.
+    """
+    cites = []
+    seen = set()
+    for h in hits:
+        meta = h.get("chunk_metadata") or {}
+        url = meta.get("url")
+        citation = h.get("citation")
+        source = h.get("source")
+        label = url or citation or source
+        if not label:
+            continue
+        if label in seen:
+            continue
+        seen.add(label)
+        cites.append(label)
+        if len(cites) >= max_cites:
+            break
+    return cites
+
+def save_current_session_snapshot():
+    """Persist current chat session to DB (JSON), storing last ~20 turns."""
+    try:
         user = st.session_state.get("user")
         username = user["email"] if isinstance(user, dict) and "email" in user else str(user)
-        chat_history = st.session_state["chat_history"]
-        question = None
-        for msg in chat_history:
-            if msg.get("role") == "user" and msg.get("content"):
-                question = msg["content"]
+        # Keep only last 20 messages to control size; 1 turn= user+assistant, so 40 items
+        msgs = st.session_state.get("chat_msgs", [])
+        if len(msgs) > 40:
+            msgs = msgs[-40:]
+            st.session_state["chat_msgs"] = msgs
+        # first question if exists
+        first_q = None
+        for m in msgs:
+            if m.get("role") == "user" and m.get("content"):
+                first_q = m["content"]
                 break
+        llm_params = {
+            "llm_source": st.session_state.get("llm_source", "Local Ollama"),
+            "temperature": float(st.session_state.get("llm_temperature", 0.1)),
+            "top_p": float(st.session_state.get("llm_top_p", 0.9)),
+            "max_tokens": int(st.session_state.get("llm_max_tokens", 1024)),
+            "repeat_penalty": float(st.session_state.get("llm_repeat_penalty", 1.1)),
+            "top_k": int(st.session_state.get("chat_top_k", 10)),
+            "custom_prompt": LEGAL_SYSTEM_PROMPT,
+        }
         save_chat_session(
-            chat_history=chat_history,
-            llm_params={
-                "model": selected_model,
-                "temperature": float(st.session_state.get("temperature", 0.2)),
-                "top_p": float(st.session_state.get("top_p", 0.95)),
-                "max_tokens": int(st.session_state.get("max_tokens", 1024)),
-                "repeat_penalty": float(st.session_state.get("repeat_penalty", 1.1)),
-                "custom_prompt": st.session_state["custom_prompt"],
-                "top_k": int(st.session_state.get("top_k", 10)),
-            },
+            chat_history=msgs,
+            llm_params=llm_params,
             ended_at=datetime.now(timezone.utc),
             username=username,
-            question=question
+            question=first_q
         )
-        st.session_state["chat_history"] = []
+    except Exception as e:
+        print(f"[chat] save_current_session_snapshot error: {e}")
+
+# Sidebar controls
+with st.sidebar:
+    st.markdown("### Account")
+    _user = st.session_state.get("user")
+    if _user:
+        st.caption(f"Signed in as {_user.get('email','')}")
+    if st.button("Logout", key="logout_btn_sidebar"):
+        st.session_state.pop("user", None)
+        if hasattr(st, "switch_page"):
+            st.switch_page("pages/login.py")
+        else:
+            st.rerun()
+
+    st.markdown("### Session", help="Your chat session details", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='session-item'>ID: <b>{st.session_state['chat_session_id']}</b><br>"
+        f"Started: <b>{st.session_state['session_started_at'].split('.')[0].replace('T',' ')}</b></div>",
+        unsafe_allow_html=True
+    )
+    if st.button("Start New Chat"):
+        save_current_session_snapshot()
+        st.session_state["chat_msgs"] = []
         st.session_state["chat_session_id"] = str(uuid.uuid4())
         st.session_state["session_started_at"] = datetime.now(timezone.utc).isoformat()
-        if hasattr(st, "rerun"):
-            st.rerun()
-        else:
-            raise st.script_runner.RerunException(st.script_request_queue.RerunData())
+        st.rerun()
 
     st.markdown("---")
-    st.markdown("### LLM Controls", help="Set LLM/decoder params below")
-    temperature = st.slider("Temperature", 0.0, 2.0, float(st.session_state.get("temperature", 0.2)), step=0.05, key="temperature")
-    top_p = st.slider("Top-p", 0.0, 1.0, float(st.session_state.get("top_p", 0.95)), step=0.01, key="top_p")
-    max_tokens = st.number_input("Max tokens", min_value=128, max_value=4096, value=int(st.session_state.get("max_tokens", 1024)), step=32, key="max_tokens")
-    repeat_penalty = st.slider("Repeat penalty", 1.0, 2.0, float(st.session_state.get("repeat_penalty", 1.1)), step=0.05, key="repeat_penalty")
-    top_k = st.number_input("Max sources per answer", min_value=3, max_value=12, value=int(st.session_state.get("top_k", 10)), step=1, key="top_k")
-    st.markdown("**Session system prompt:**")
-    st.text_area("Prompt", key="custom_prompt", value=st.session_state["custom_prompt"], height=90)
-    st.markdown("---")
-    st.caption("All answers grounded in your legal corpus.")
-
-def hybrid_search(query, top=10):
-    text_hits = search_bm25(query, top_k=top)
-    vec_hits = search_vector(embedder.embed([query])[0], top_k=top)
-    seen = set()
-    all_hits = []
-    for x in text_hits + vec_hits:
-        k = (x["source"], x.get("span", ""))
-        if k not in seen:
-            seen.add(k)
-            all_hits.append(x)
-    all_hits.sort(key=lambda x: -x.get("score", 0))
-    return all_hits[:top], vec_hits
-
-def get_recent_chat_history_str(max_turns=3):
-    chat = st.session_state["chat_history"][-2*max_turns:] if len(st.session_state["chat_history"]) > 0 else []
-    transcript = []
-    for entry in chat:
-        if entry["role"] == "user":
-            transcript.append(f"User: {entry['content']}")
-        elif entry["role"] == "llm":
-            transcript.append(f"Assistant: {entry['content']}")
-    return "\n".join(transcript)
-
-def rag_llm(query, context_chunks, sources, custom_prompt, model, stream_cb, _temperature, _top_p, _max_tokens, _repeat_penalty):
-    rag = RAGPipeline(model=model)
-    chat_history_str = get_recent_chat_history_str(max_turns=3)
-    sys_and_history = f"{custom_prompt.strip()}\n\nChat:\n{chat_history_str}\n" if chat_history_str else custom_prompt.strip()
-    chunks = context_chunks
-    try:
-        rag_out = rag.query(
-            question=query,
-            context_chunks=chunks,
-            sources=sources,
-            custom_prompt=sys_and_history,
-            temperature=_temperature,
-            top_p=_top_p,
-            max_tokens=int(_max_tokens),
-            repeat_penalty=_repeat_penalty
-        )["answer"]
-        buf = ""
-        for ch in rag_out:
-            buf += ch
-            stream_cb(buf + "▌")
-            time.sleep(0.012)
-        stream_cb(buf)
-        return buf
-    except Exception as e:
-        stream_cb(f"❗ Error: {str(e)}")
-        return f"Error: {str(e)}"
-
-def show_chunks(chunks, vec_hits):
-    st.markdown("<b>Top Retrieved Chunks</b>", unsafe_allow_html=True)
-    for i, c in enumerate(chunks[:10], 1):  # Always display at most 10
-        url = c.get("url", "")
-        source_display = c.get("source", "(unknown)")
-        # clickable header: url, else source string
-        if url:
-            hdr = f'<a href="{url}" class="chunk-header-link" target="_blank">{source_display if source_display else url}</a>'
+    st.markdown("### LLM Source")
+    llm_source = st.selectbox("Select LLM", ["Local Ollama", "OCI GenAI", "AWS Bedrock"], index=0, key="llm_source")
+    # When using Local Ollama, allow selecting a local model; warn if none available
+    ollama_models = []
+    selected_ollama = None
+    if st.session_state["llm_source"] == "Local Ollama":
+        try:
+            ollama_models = list_ollama_models()
+        except Exception:
+            ollama_models = []
+        if ollama_models:
+            selected_ollama = st.selectbox("Ollama model", ollama_models, index=0, key="ollama_model")
+            st.session_state["ollama_model"] = selected_ollama
         else:
-            hdr = f'<span class="chunk-header-link">{source_display}</span>'
-        meta_out = ""
-        meta = {k: v for k, v in c.items() if k not in ("text","source","url","score")}
-        for mk, mv in meta.items():
-            meta_out += f"<div><b>{mk}:</b> <span>{str(mv)}</span></div>"
-        score = c.get("score", 0)
-        st.markdown(
-            f"""
-            <div class="retr-chunk-card">
-                {hdr}
-                <div class="chunk-score">Score: {score:.4f}</div>
-                <div class="chunk-metadata">{meta_out}</div>
-                <div class="chunk-body">{c.get('text','')[:500]}{' ...' if len(c.get('text',''))>500 else ''}</div>
-            </div>
-            """, unsafe_allow_html=True)
-    if vec_hits:
-        st.caption("Semantic (vector-only) top results for reference:")
-        for i,v in enumerate(vec_hits[:10],1):
-            url = v.get("url", "")
-            source_display = v.get("source", "(unknown)")
-            if url:
-                hdr = f'<a href="{url}" class="chunk-header-link" target="_blank">{source_display if source_display else url}</a>'
-            else:
-                hdr = f'<span class="chunk-header-link">{source_display}</span>'
-            meta_out = ""
-            meta = {k: v for k, v in v.items() if k not in ("text","source","url","score")}
-            for mk, mv in meta.items():
-                meta_out += f"<div><b>{mk}:</b> <span>{str(mv)}</span></div>"
-            score = v.get("score", 0)
-            st.markdown(
-                f"""
-                <div class="retr-chunk-card">
-                    {hdr}
-                    <div class="chunk-score">Score: {score:.4f}</div>
-                    <div class="chunk-metadata">{meta_out}</div>
-                    <div class="chunk-body">{v.get('text','')[:340]}{' ...' if len(v.get('text',''))>340 else ''}</div>
-                </div>
-                """, unsafe_allow_html=True)
+            st.session_state["ollama_model"] = None
+            st.warning("No local Ollama models found. Please load a model to your local host to use as a LLM Source")
 
-def show_message(role, msg):
-    if role == "user":
-        st.markdown(f"<div class='user-bubble'>{msg}</div>", unsafe_allow_html=True)
+    st.markdown("### Generation Controls")
+    st.session_state["chat_top_k"] = st.number_input("Top K context chunks", min_value=3, max_value=100, value=int(st.session_state["chat_top_k"]), step=1)
+    st.session_state["llm_temperature"] = st.slider("Temperature", 0.0, 2.0, float(st.session_state["llm_temperature"]), step=0.05)
+    st.session_state["llm_top_p"] = st.slider("Top-p", 0.0, 1.0, float(st.session_state["llm_top_p"]), step=0.01)
+    st.session_state["llm_max_tokens"] = st.number_input("Max tokens", min_value=128, max_value=4096, value=int(st.session_state["llm_max_tokens"]), step=32)
+    st.session_state["llm_repeat_penalty"] = st.slider("Repeat penalty", 1.0, 2.0, float(st.session_state["llm_repeat_penalty"]), step=0.05)
+    st.caption("These parameters affect the LLM's decoding behavior.", help=None)
+
+    st.markdown("---")
+    st.markdown("### Recent Conversations")
+    recent = list_recent_chat_sessions(limit=10)
+    recent_opts = [f"{x['title']} — {x['started_at']} — {x['username']}" for x in recent] or ["No recent sessions"]
+    sel = st.selectbox("Load a previous conversation", recent_opts, index=0)
+    if st.button("Load Conversation", disabled=(not recent or "No recent sessions" in sel)):
+        try:
+            idx = recent_opts.index(sel)
+            chat_id = recent[idx]["id"]
+            rec = get_chat_session(chat_id)
+            hist = rec.chat_history if rec else None
+            # Parse JSON text or dict into python list
+            if isinstance(hist, (str, bytes)):
+                try:
+                    hist = json.loads(hist)
+                except Exception:
+                    hist = []
+            if not isinstance(hist, list):
+                hist = []
+            st.session_state["chat_msgs"] = hist[-40:] if len(hist) > 40 else hist
+            st.session_state["chat_session_id"] = chat_id
+            st.session_state["session_started_at"] = (rec.started_at.isoformat() if rec and rec.started_at else datetime.now(timezone.utc).isoformat())
+            st.success(f"Loaded conversation {chat_id}")
+        except Exception as e:
+            st.error(f"Failed to load conversation: {e}")
+
+st.markdown("## Chat", unsafe_allow_html=True)
+st.markdown("<div class='chat-ct'>", unsafe_allow_html=True)
+
+# Render chat history (ChatGPT-like: question, answer, citations)
+for m in st.session_state["chat_msgs"]:
+    if m["role"] == "user":
+        with st.chat_message("user"):
+            st.markdown(m["content"])
     else:
-        st.markdown(f"<div class='llm-bubble'>{msg}</div>", unsafe_allow_html=True)
+        with st.chat_message("assistant"):
+            st.markdown(m["content"])
+            cites = m.get("citations") or []
+            if cites:
+                st.markdown("**Citations (Top 10):**")
+                for i, c in enumerate(cites, 1):
+                    if isinstance(c, str) and c.startswith("http"):
+                        st.markdown(f"{i}. [{c}]({c})")
+                    else:
+                        st.markdown(f"{i}. {c}")
 
-with st.container():
-    for turn in st.session_state["chat_history"]:
-        show_message(turn["role"], turn["content"])
-        if turn.get("chunks"):
-            show_chunks(turn["chunks"], turn.get("vec_hits"))
-    user_prompt = st.chat_input("Ask your legal question or request a summary, clause extraction, etc…")
-    if user_prompt:
-        st.session_state["chat_history"].append({"role":"user","content":user_prompt})
-        doc_hits, vec_hits = hybrid_search(user_prompt, top=10)  # Always top 10
-        st.session_state["chat_history"].append({"role": "llm", "content": "<i>Retrieving and synthesizing answer…</i>", "chunks": doc_hits, "vec_hits": vec_hits})
-        answer_slot = st.empty()
-        def stream_cb(val): answer_slot.markdown(f"<div class='llm-bubble streaming'>{val}</div>", unsafe_allow_html=True)
-        context_chunks = [d["text"] for d in doc_hits]
-        sources = [d.get("source","") for d in doc_hits]
-        answer = rag_llm(
-            user_prompt, context_chunks, sources, st.session_state["custom_prompt"], selected_model, stream_cb,
-            temperature, top_p, max_tokens, repeat_penalty
+# Chat input
+user_msg = st.chat_input("Ask your legal question (citations required)…")
+if user_msg:
+    # Append user turn
+    st.session_state["chat_msgs"].append({"role": "user", "content": user_msg})
+    # Immediately display the user message under previous citations (ChatGPT-like order)
+    with st.chat_message("user"):
+        st.markdown(user_msg)
+
+    # Retrieve context via FastAPI hybrid search
+    hits = []
+    context_chunks = []
+    chunk_metadata = []
+    try:
+        r_ctx = requests.post(
+            f"{API_ROOT}/search/hybrid",
+            json={"query": user_msg, "top_k": int(st.session_state['chat_top_k']), "alpha": 0.5},
+            auth=AUTH_TUPLE, timeout=30
         )
-        st.session_state["chat_history"][-1] = {
-            "role": "llm",
-            "content": answer,
-            "chunks": doc_hits,
-            "vec_hits": vec_hits
-        }
-        show_message("llm", answer)
-        show_chunks(doc_hits, vec_hits)
+        r_ctx.raise_for_status()
+        hits = r_ctx.json() if r_ctx.ok else []
+        context_chunks = [h.get("text", "") for h in hits]
+        chunk_metadata = [h.get("chunk_metadata") or {} for h in hits]
+    except Exception as e:
+        hits, context_chunks, chunk_metadata = [], [], []
+
+    # Build citations list (top 10)
+    citations = extract_citations(hits, max_cites=10)
+
+    # Compose history-augmented prompt
+    history_txt = build_history_prompt(max_turns=10)
+    custom_prompt = LEGAL_SYSTEM_PROMPT + ("\n\nChat History:\n" + history_txt if history_txt else "")
+
+    # Assistant response area (stream for Ollama; others as full text)
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        assistant_text = ""
+
+        if st.session_state["llm_source"] == "Local Ollama":
+            # Stream from /search/rag_stream
+            try:
+                selected_model = st.session_state.get("ollama_model")
+                if not selected_model:
+                    assistant_text += "No local Ollama models found. Please load a model to your local host to use as a LLM Source"
+                    placeholder.markdown(f"<div class='assistant-bubble streaming'>{assistant_text}</div>", unsafe_allow_html=True)
+                else:
+                    payload = {
+                        "question": user_msg,
+                        "context_chunks": context_chunks or [],
+                        "chunk_metadata": chunk_metadata or [],
+                        "custom_prompt": LEGAL_SYSTEM_PROMPT,
+                        "temperature": float(st.session_state["llm_temperature"]),
+                        "top_p": float(st.session_state["llm_top_p"]),
+                        "max_tokens": int(st.session_state["llm_max_tokens"]),
+                        "repeat_penalty": float(st.session_state["llm_repeat_penalty"]),
+                        "model": selected_model
+                    }
+                    with requests.post(f"{API_ROOT}/search/rag_stream", json=payload, auth=AUTH_TUPLE, stream=True, timeout=300) as resp:
+                        resp.raise_for_status()
+                        for chunk in resp.iter_lines(decode_unicode=True):
+                            if not chunk:
+                                continue
+                            assistant_text += chunk
+                            placeholder.markdown(assistant_text)
+            except Exception as e:
+                assistant_text += f"\n[stream-error] {e}"
+                placeholder.markdown(assistant_text)
+
+        elif st.session_state["llm_source"] == "OCI GenAI":
+            try:
+                payload = {
+                    "oci_config": {
+                        "compartment_id": os.environ.get("OCI_COMPARTMENT_OCID",""),
+                        "model_id": os.environ.get("OCI_GENAI_MODEL_OCID",""),
+                        "region": os.environ.get("OCI_REGION","ap-sydney-1")
+                    },
+                    "question": user_msg,
+                    "context_chunks": context_chunks or [],
+                    "sources": [],
+                    "chunk_metadata": chunk_metadata or [],
+                    "custom_prompt": custom_prompt,
+                    "temperature": float(st.session_state["llm_temperature"]),
+                    "top_p": float(st.session_state["llm_top_p"]),
+                    "max_tokens": int(st.session_state["llm_max_tokens"]),
+                    "repeat_penalty": float(st.session_state["llm_repeat_penalty"])
+                }
+                r = requests.post(f"{API_ROOT}/search/oci_rag", json=payload, auth=AUTH_TUPLE, timeout=180)
+                data = r.json() if r.ok else {}
+                assistant_text = data.get("answer","") or ""
+                placeholder.markdown(assistant_text)
+            except Exception as e:
+                assistant_text = f"[oci-error] {e}"
+                placeholder.markdown(assistant_text)
+
+        else:  # AWS Bedrock
+            try:
+                payload = {
+                    "region": os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
+                    "model_id": os.environ.get("BEDROCK_MODEL_ID",""),
+                    "question": user_msg,
+                    "context_chunks": context_chunks or [],
+                    "sources": [],
+                    "chunk_metadata": chunk_metadata or [],
+                    "custom_prompt": custom_prompt,
+                    "temperature": float(st.session_state["llm_temperature"]),
+                    "top_p": float(st.session_state["llm_top_p"]),
+                    "max_tokens": int(st.session_state["llm_max_tokens"]),
+                    "repeat_penalty": float(st.session_state["llm_repeat_penalty"])
+                }
+                r = requests.post(f"{API_ROOT}/search/bedrock_rag", json=payload, auth=AUTH_TUPLE, timeout=180)
+                data = r.json() if r.ok else {}
+                assistant_text = data.get("answer","") or ""
+                placeholder.markdown(assistant_text)
+            except Exception as e:
+                assistant_text = f"[bedrock-error] {e}"
+                placeholder.markdown(assistant_text)
+
+        # After final answer, show citations below
+        if citations:
+            st.markdown("**Citations (Top 10):**")
+            for i, c in enumerate(citations, 1):
+                if isinstance(c, str) and c.startswith("http"):
+                    st.markdown(f"{i}. [{c}]({c})")
+                else:
+                    st.markdown(f"{i}. {c}")
+
+    # Commit assistant turn with citations and save snapshot
+    st.session_state["chat_msgs"].append({"role": "assistant", "content": assistant_text, "citations": citations})
+    # Keep last 20 turns (40 messages)
+    if len(st.session_state["chat_msgs"]) > 40:
+        st.session_state["chat_msgs"] = st.session_state["chat_msgs"][-40:]
+    save_current_session_snapshot()
+
+st.markdown("</div>", unsafe_allow_html=True)

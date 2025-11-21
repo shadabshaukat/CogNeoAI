@@ -1,5 +1,5 @@
 """
-Test script to verify DB connection and create/check tables for auslegalsearchv2.
+Test script to verify DB connection and create/check tables for cogneov2.
 Run this file directly: python db/test_db_setup.py
 It will:
 - Print the database URL (DB_URL) in use.

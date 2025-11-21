@@ -1,5 +1,5 @@
 """
-Centralized DB models and ORM for auslegalsearchv3.
+Centralized DB models and ORM for cogneo.
 - Exports all tables, full CRUD/session logic for users, ingestion, search, embedding, chat, and conversion files.
 - All app code imports models and functions from here, schema created with create_all_tables().
 """
@@ -7,7 +7,7 @@ Centralized DB models and ORM for auslegalsearchv3.
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Float, Date
 from sqlalchemy import select, desc, text
-from db.connector import engine, SessionLocal, Vector, JSONB, UUIDType
+from db.connector_postgres import engine, SessionLocal, Vector, JSONB, UUIDType
 from datetime import datetime
 import uuid
 import os
@@ -15,7 +15,7 @@ import bcrypt
 
 # Production: avoid loading ML models at import-time in DB module.
 # Use a configured embedding dimension (defaults to 768 for common ST/HF models).
-EMBEDDING_DIM = int(os.environ.get("AUSLEGALSEARCH_EMBED_DIM", "768"))
+EMBEDDING_DIM = int(os.environ.get("COGNEO_EMBED_DIM", "768"))
 
 Base = declarative_base()
 
@@ -205,8 +205,8 @@ def create_all_tables():
     ])
     # --- Post-table DDL: create indexes, triggers, and FTS structures if missing ---
     # Light-init mode skips heavy backfills and large index builds to avoid stalls on new instances.
-    # Set AUSLEGALSEARCH_SCHEMA_LIGHT_INIT=1 in the environment to enable.
-    LIGHT_INIT = os.environ.get("AUSLEGALSEARCH_SCHEMA_LIGHT_INIT", "0") == "1"
+    # Set COGNEO_SCHEMA_LIGHT_INIT=1 in the environment to enable.
+    LIGHT_INIT = os.environ.get("COGNEO_SCHEMA_LIGHT_INIT", "0") == "1"
 
     ddl_sql = [
         # 1. Add document_fts if missing

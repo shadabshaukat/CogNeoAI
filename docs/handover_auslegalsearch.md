@@ -1,12 +1,12 @@
-# AUSLegalSearch v3 — Handover Document
+# CogNeo v3 — Handover Document
 
-This document explains the architecture, database schema, embedding and chunking strategies, and ingestion/loading pipeline for the AUSLegalSearchv3 system.
+This document explains the architecture, database schema, embedding and chunking strategies, and ingestion/loading pipeline for the CogNeo system.
 
 ---
 
 ## 1. System Overview
 
-AUSLegalSearchv3 is a research platform for legal documents, designed with semantic search, hybrid/BM25 and FTS capabilities, leveraging large transformer-based vector models. It provides a unified API/Gradio/Streamlit interface with robust and reproducible vector and metadata management, optimized for legal research use cases.
+CogNeo is a research platform for legal documents, designed with semantic search, hybrid/BM25 and FTS capabilities, leveraging large transformer-based vector models. It provides a unified API/Gradio/Streamlit interface with robust and reproducible vector and metadata management, optimized for legal research use cases.
 
 ---
 
@@ -53,7 +53,7 @@ Automatically enabled (if missing):
 
 ## 3. Embedding Model
 
-- Default: [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) (`AUSLEGALSEARCH_EMBED_MODEL` env var overridable)
+- Default: [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) (`COGNEO_EMBED_MODEL` env var overridable)
 - Vectors: 768 dimensions
 - Context window: Up to ~2048 tokens per chunk
 - HuggingFace `sentence-transformers` loader

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-End-to-end SQL latency benchmark for AUSLegalSearch v3
+End-to-end SQL latency benchmark for CogNeo v3
 
 Baseline targets (existing):
 - Vector similarity (pgvector) + JSON metadata filters
@@ -64,7 +64,7 @@ Usage examples:
 
 Notes:
 - Uses SQLAlchemy engine from db.connector (reads .env automatically).
-- Embedding model comes from AUSLEGALSEARCH_EMBED_MODEL env or default in embedding/embedder.py.
+- Embedding model comes from COGNEO_EMBED_MODEL env or default in embedding/embedder.py.
 - Tune ivfflat.probes (IVFFLAT) or hnsw.ef_search (HNSW) per run.
 """
 
@@ -979,7 +979,7 @@ def _percentile(values: List[float], p: float) -> float:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Benchmark SQL latency for AUSLegalSearch (baseline + optimized scenarios).")
+    ap = argparse.ArgumentParser(description="Benchmark SQL latency for CogNeo (baseline + optimized scenarios).")
     ap.add_argument("--scenario", default="baseline", choices=[
         "baseline",
         "cases_by_citation",

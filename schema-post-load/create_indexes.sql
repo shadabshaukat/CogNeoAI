@@ -1,5 +1,5 @@
 -- schema-post-load/create_indexes.sql
--- Post-load indexing and tuning for AUSLegalSearch v3 at large scale (~TBs)
+-- Post-load indexing and tuning for CogNeo v3 at large scale (~TBs)
 -- This variant uses STORED GENERATED COLUMNS + simple indexes to maximize compatibility
 -- with DB tools that reject expression indexes or "CONCURRENTLY".
 -- Prefer to run during a low-traffic window.

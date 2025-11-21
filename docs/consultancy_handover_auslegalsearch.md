@@ -1,5 +1,5 @@
 <!--
-AUSLegalSearch v3 — Comprehensive Code & Architecture Walkthrough
+CogNeo v3 — Comprehensive Code & Architecture Walkthrough
 
 Prepared for: [Insert Client/Department name]
 Prepared by: [Insert Consultant/Author]
@@ -10,9 +10,9 @@ Revision: 1.0
 
 # Title Page
 
-**AUSLegalSearch v3 — Full Technical & Functional Handover**
+**CogNeo v3 — Full Technical & Functional Handover**
 
-_Professional walkthrough and architecture explainer of the AUSLegalSearch platform: Streamlit, Gradio, FastAPI, Embedding and Ingestion, Database Schema, and System Extension._
+_Professional walkthrough and architecture explainer of the CogNeo platform: Streamlit, Gradio, FastAPI, Embedding and Ingestion, Database Schema, and System Extension._
 
 ---
 
@@ -39,7 +39,7 @@ _Professional walkthrough and architecture explainer of the AUSLegalSearch platf
 
 ## 1. Executive Summary
 
-AUSLegalSearchv3 integrates advanced vector-based legal document retrieval, easy ingestion & chunking, with GenAI/AIRAG and hybrid search, delivered as powerful Streamlit and Gradio UIs on a robust Python/FastAPI backend.
+CogNeo integrates advanced vector-based legal document retrieval, easy ingestion & chunking, with GenAI/AIRAG and hybrid search, delivered as powerful Streamlit and Gradio UIs on a robust Python/FastAPI backend.
 
 ### Key Features
 

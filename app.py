@@ -1,5 +1,5 @@
 """
-AUSLegalSearch v3 – Main App Page (ENHANCED: rich metadata chunk display)
+CogNeo AI – Main App Page (ENHANCED: rich metadata chunk display)
 - Sidebar batch convert with 'Start' button
 - Legal hybrid search, ingestion, RAG, all chunk context returns rich metadata
 """
@@ -9,24 +9,35 @@ from pathlib import Path
 import requests
 from ingest import loader
 from embedding.embedder import Embedder, DEFAULT_MODEL
-from db.store import (
-    start_session, update_session_progress, complete_session, fail_session,
-    get_active_sessions, get_session, add_document, add_embedding, search_vector, search_bm25, search_hybrid,
-    EmbeddingSessionFile, SessionLocal
-)
+STORE_IMPORT_ERROR = None
+try:
+    from db.store import (
+        start_session, update_session_progress, complete_session, fail_session,
+        get_active_sessions, get_session, add_document, add_embedding, search_vector, search_bm25, search_hybrid,
+        EmbeddingSessionFile, SessionLocal
+    )
+except Exception as e:
+    STORE_IMPORT_ERROR = e
 from rag.rag_pipeline import RAGPipeline, list_ollama_models
 import os
 from datetime import datetime
 import subprocess
 import time
 import re
+import traceback
 
 import legal_html2text
 
-st.set_page_config(page_title="AUSLegalSearch v3", layout="wide")
-st.title("AUSLegalSearch v3 – Legal Document Search, Background Embedding & RAG")
+st.set_page_config(page_title="CogNeo AI", layout="wide")
+st.title("CogNeo AI – Document Search, Background Embedding & RAG")
 
-API_ROOT = os.environ.get("AUSLEGALSEARCH_API_URL", "http://localhost:8000")
+# Show import/DB errors early so Streamlit renders the page instead of exiting silently
+if "STORE_IMPORT_ERROR" in globals() and STORE_IMPORT_ERROR:
+    st.error("Backend store import failed. Verify COGNEO_DB_BACKEND, DB connectivity, and required drivers.")
+    st.code(str(STORE_IMPORT_ERROR), language="text")
+    st.stop()
+
+API_ROOT = os.environ.get("COGNEO_API_URL", "http://localhost:8000")
 
 def get_num_gpus():
     try:
@@ -40,6 +51,7 @@ def get_num_gpus():
     except Exception:
         return 1
 
+# Enforce login for Streamlit (redirect to pages/login.py)
 if "user" not in st.session_state:
     st.warning("You must login to continue.")
     if hasattr(st, "switch_page"):
@@ -68,8 +80,7 @@ EMBEDDING_MODELS = [
     "nomic-ai/nomic-embed-text-v1.5",
     "all-MiniLM-L6-v2",
     "BAAI/bge-base-en-v1.5",
-    "maastrichtlawtech/bge-legal-en-v1.5",
-    "nlpaueb/legal-bert-base-uncased",
+    "sentence-transformers/all-mpnet-base-v2",
 ]
 selected_embedding_model = st.sidebar.selectbox(
     "Embedding Model (for chunk/vectorization)",
@@ -78,7 +89,7 @@ selected_embedding_model = st.sidebar.selectbox(
 )
 st.sidebar.caption(f"Embedding model in use: `{selected_embedding_model}`")
 
-db_url = os.environ.get("AUSLEGALSEARCH_DB_URL", "")
+db_url = os.environ.get("COGNEO_DB_URL", "")
 if db_url:
     db_url_masked = re.sub(r'(://[^:]+:)[^@]+@', r'\1*****@', db_url)
     st.sidebar.markdown(f"**DB URL:** `{db_url_masked}`")
@@ -87,25 +98,32 @@ Example DB URL:
 postgresql+psycopg2://username:password@host:port/databasename
 
    |__ protocol/driver    |__ user    |__ pass  |__ host    |__ port |__ db name
-postgresql+psycopg2       myuser      secret    localhost   5432     auslegalsearch
+postgresql+psycopg2       myuser      secret    localhost   5432     cogneo
     """, language="text")
 else:
-    db_url = os.environ.get("AUSLEGALSEARCH_DB_HOST", "localhost")
-    db_name = os.environ.get("AUSLEGALSEARCH_DB_NAME", "auslegalsearch")
+    db_url = os.environ.get("COGNEO_DB_HOST", "localhost")
+    db_name = os.environ.get("COGNEO_DB_NAME", "cogneo")
     st.sidebar.markdown(f"**DB Host:** `{db_url}`<br>**DB Name:** `{db_name}`", unsafe_allow_html=True)
 
-model_list = list_ollama_models()
-if not model_list:
-    st.sidebar.warning("No Ollama models found locally. Is Ollama running?")
-    model_list = ["llama3"]
-selected_model = st.sidebar.selectbox("RAG LLM model (Ollama, legal-tuned preferred)", model_list, index=0)
 
-st.markdown("### Custom System Prompt for Legal QA")
+st.markdown("### Custom System Prompt")
 user_system_prompt = st.text_area(
     "System Prompt",
     value=LEGAL_SYSTEM_PROMPT,
     help="Set a custom prompt for the legal assistant. This guides legal compliance output."
 )
+
+# --- Account / Logout ---
+st.sidebar.markdown("### Account")
+_user = st.session_state.get("user")
+if _user:
+    st.sidebar.caption(f"Signed in as {_user.get('email','')}")
+if st.sidebar.button("Logout", key="logout_btn"):
+    st.session_state.pop("user", None)
+    if hasattr(st, "switch_page"):
+        st.switch_page("pages/login.py")
+    else:
+        st.rerun()
 
 # --- TOP LEVEL SIDEBAR ACTION BUTTONS ---
 st.sidebar.header("Corpus & Conversion Workflow")
@@ -316,13 +334,26 @@ if st.session_state.get("run_ingest"):
             st.session_state["session_name"] = ""
             st.rerun()
 
-st.markdown("## Legal Document & Hybrid Search")
-query = st.text_input("Enter a legal research question or statutory query...")
+st.markdown("## Document & Hybrid Search")
+query = st.text_input("Enter a research question or query...")
 top_k = st.slider("How many results?", min_value=1, max_value=10, value=5)
 alpha = st.slider("Hybrid weighting (higher: more semantic, lower: more keyword)", min_value=0.0, max_value=1.0, value=0.5)
+llm_source_rag = st.selectbox("LLM Source for RAG", ["Local Ollama", "OCI GenAI", "AWS Bedrock"], index=0)
+selected_ollama_model = None
+_ollama_models = []
+if llm_source_rag == "Local Ollama":
+    try:
+        _ollama_models = list_ollama_models()
+    except Exception:
+        _ollama_models = []
+    if _ollama_models:
+        selected_ollama_model = st.selectbox("Ollama model", _ollama_models, index=0)
+    else:
+        st.warning("No local Ollama models found. Please load a model to your local host to use as a LLM Source")
+disable_rag_btn = (llm_source_rag == "Local Ollama" and not _ollama_models)
 
-if st.button("Hybrid Search & RAG"):
-    st.write("🔎 Performing hybrid legal-aware search and running RAG LLM...")
+if st.button("Hybrid Search & RAG", disabled=disable_rag_btn):
+    st.write("🔎 Performing hybrid search and running RAG LLM...")
     try:
         resp = requests.post(f"{API_ROOT}/search/hybrid", json={"query": query, "top_k": top_k, "alpha": alpha}, timeout=30,
             auth=(os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein")))
@@ -332,7 +363,7 @@ if st.button("Hybrid Search & RAG"):
         st.error(f"Hybrid search error: {e}")
         hits = []
     if not hits:
-        st.warning("No results found for this query in the legal corpus.")
+        st.warning("No results found for this query in the corpus.")
     else:
         st.markdown("**Relevant Document Chunks (Cite & Score):**")
         for i, h in enumerate(hits, 1):
@@ -348,19 +379,68 @@ if st.button("Hybrid Search & RAG"):
         context_chunks = [h["text"] for h in hits]
         sources = [h["citation"] for h in hits]
         chunk_metadata = [h.get("chunk_metadata") for h in hits]
-        rag = RAGPipeline(model=selected_model)
-        with st.spinner(f"Calling {selected_model} via Ollama with legal prompt..."):
-            result = rag.query(
-                query,
-                top_k=top_k,
-                context_chunks=context_chunks,
-                sources=sources,
-                chunk_metadata=chunk_metadata,
-                custom_prompt=user_system_prompt
-            )
-            answer = result.get("answer", "").strip()
+        with st.spinner(f"Calling {llm_source_rag}..."):
+            answer = ""
+            try:
+                auth_tuple = (os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein"))
+                if llm_source_rag == "Local Ollama":
+                    payload = {
+                        "question": query,
+                        "model": selected_ollama_model,
+                        "top_k": top_k,
+                        "context_chunks": context_chunks or [],
+                        "sources": sources or [],
+                        "chunk_metadata": chunk_metadata or [],
+                        "custom_prompt": user_system_prompt,
+                        "temperature": 0.1,
+                        "top_p": 0.9,
+                        "max_tokens": 1024,
+                        "repeat_penalty": 1.1
+                    }
+                    r = requests.post(f"{API_ROOT}/search/rag", json=payload, auth=auth_tuple, timeout=60)
+                    data = r.json() if r.ok else {}
+                    answer = (data.get("answer","") or "").strip()
+                elif llm_source_rag == "OCI GenAI":
+                    oci_payload = {
+                        "oci_config": {
+                            "compartment_id": os.environ.get("OCI_COMPARTMENT_OCID",""),
+                            "model_id": os.environ.get("OCI_GENAI_MODEL_OCID",""),
+                            "region": os.environ.get("OCI_REGION","ap-sydney-1")
+                        },
+                        "question": query,
+                        "context_chunks": context_chunks or [],
+                        "sources": sources or [],
+                        "chunk_metadata": chunk_metadata or [],
+                        "custom_prompt": user_system_prompt,
+                        "temperature": 0.1,
+                        "top_p": 0.9,
+                        "max_tokens": 1024,
+                        "repeat_penalty": 1.1
+                    }
+                    r = requests.post(f"{API_ROOT}/search/oci_rag", json=oci_payload, auth=auth_tuple, timeout=90)
+                    data = r.json() if r.ok else {}
+                    answer = (data.get("answer","") or "").strip()
+                else:  # AWS Bedrock
+                    bed_payload = {
+                        "region": os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
+                        "model_id": os.environ.get("BEDROCK_MODEL_ID",""),
+                        "question": query,
+                        "context_chunks": context_chunks or [],
+                        "sources": sources or [],
+                        "chunk_metadata": chunk_metadata or [],
+                        "custom_prompt": user_system_prompt,
+                        "temperature": 0.1,
+                        "top_p": 0.9,
+                        "max_tokens": 1024,
+                        "repeat_penalty": 1.1
+                    }
+                    r = requests.post(f"{API_ROOT}/search/bedrock_rag", json=bed_payload, auth=auth_tuple, timeout=120)
+                    data = r.json() if r.ok else {}
+                    answer = (data.get("answer","") or "").strip()
+            except Exception as e:
+                answer = f"[rag-error] {e}"
             if answer:
-                st.markdown(f"**LLM Answer (from {selected_model}, RAG):**")
+                st.markdown(f"**LLM Answer (RAG via {llm_source_rag}):**")
                 st.success(answer)
                 st.markdown("**Sources/Citations Used:**")
                 for i, src in enumerate(sources):
@@ -374,9 +454,136 @@ if st.button("Hybrid Search & RAG"):
                 bad = st.button("👎 Mark answer as incorrect (QA)")
                 if good or bad:
                     feedback = {"question": query, "answer": answer, "sources": sources, "correct": good, "incorrect": bad}
-                    st.success("Feedback received! Thank you for enhancing legal RAG QA.")
+                    st.success("Feedback received! Thank you for enhancing RAG QA.")
             else:
                 st.warning("No answer returned from Ollama/LLM.")
 
+# --- Streaming RAG Chat (chat-style) ---
+st.markdown("## RAG Chat (Streaming)")
+chat_llm_source = st.selectbox("LLM Source", ["Local Ollama", "OCI GenAI", "AWS Bedrock"], index=0)
+chat_selected_ollama_model = None
+_chat_ollama_models = []
+if chat_llm_source == "Local Ollama":
+    try:
+        _chat_ollama_models = list_ollama_models()
+    except Exception:
+        _chat_ollama_models = []
+    if _chat_ollama_models:
+        chat_selected_ollama_model = st.selectbox("Ollama model (chat)", _chat_ollama_models, index=0)
+    else:
+        st.warning("No local Ollama models found. Please load a model to your local host to use as a LLM Source")
+if "chat_msgs" not in st.session_state:
+    st.session_state["chat_msgs"] = []
+
+for m in st.session_state["chat_msgs"]:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
+
+user_msg = st.chat_input("Ask a question...")
+if user_msg:
+    st.session_state["chat_msgs"].append({"role": "user", "content": user_msg})
+    with st.chat_message("user"):
+        st.markdown(user_msg)
+
+    # Retrieve context via hybrid search from FastAPI
+    try:
+        r_ctx = requests.post(
+            f"{API_ROOT}/search/hybrid",
+            json={"query": user_msg, "top_k": 10, "alpha": 0.5},
+            auth=(os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein")),
+            timeout=30
+        )
+        r_ctx.raise_for_status()
+        hits = r_ctx.json() if r_ctx.ok else []
+        context_chunks = [h.get("text","") for h in hits]
+        chunk_metadata = [h.get("chunk_metadata") or {} for h in hits]
+    except Exception as e:
+        context_chunks, chunk_metadata = [], []
+
+    # Answer using selected LLM source
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        auth_tuple = (os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein"))
+        if chat_llm_source == "Local Ollama":
+            acc = ""
+            try:
+                if not chat_selected_ollama_model:
+                    acc = "No local Ollama models found. Please load a model to your local host to use as a LLM Source"
+                    placeholder.markdown(acc)
+                else:
+                    payload = {
+                    "question": user_msg,
+                    "context_chunks": context_chunks or [],
+                    "chunk_metadata": chunk_metadata or [],
+                    "custom_prompt": LEGAL_SYSTEM_PROMPT,
+                    "temperature": 0.1,
+                    "top_p": 0.9,
+                    "max_tokens": 1024,
+                    "repeat_penalty": 1.1,
+                    "model": chat_selected_ollama_model
+                }
+                with requests.post(f"{API_ROOT}/search/rag_stream", json=payload, auth=auth_tuple, stream=True, timeout=300) as resp:
+                    resp.raise_for_status()
+                    for chunk in resp.iter_lines(decode_unicode=True):
+                        if not chunk:
+                            continue
+                        acc += chunk
+                        placeholder.markdown(acc)
+            except Exception as e:
+                acc += f"\n[stream-error] {e}"
+                placeholder.markdown(acc)
+            st.session_state["chat_msgs"].append({"role": "assistant", "content": acc})
+        elif chat_llm_source == "OCI GenAI":
+            try:
+                oci_payload = {
+                    "oci_config": {
+                        "compartment_id": os.environ.get("OCI_COMPARTMENT_OCID",""),
+                        "model_id": os.environ.get("OCI_GENAI_MODEL_OCID",""),
+                        "region": os.environ.get("OCI_REGION","ap-sydney-1")
+                    },
+                    "question": user_msg,
+                    "context_chunks": context_chunks or [],
+                    "sources": [],
+                    "chunk_metadata": chunk_metadata or [],
+                    "custom_prompt": LEGAL_SYSTEM_PROMPT,
+                    "temperature": 0.1,
+                    "top_p": 0.9,
+                    "max_tokens": 1024,
+                    "repeat_penalty": 1.1
+                }
+                r = requests.post(f"{API_ROOT}/search/oci_rag", json=oci_payload, auth=auth_tuple, timeout=120)
+                data = r.json() if r.ok else {}
+                ans = data.get("answer","") or ""
+                placeholder.markdown(ans)
+                st.session_state["chat_msgs"].append({"role": "assistant", "content": ans})
+            except Exception as e:
+                err = f"[oci-error] {e}"
+                placeholder.markdown(err)
+                st.session_state["chat_msgs"].append({"role": "assistant", "content": err})
+        else:  # AWS Bedrock
+            try:
+                bed_payload = {
+                    "region": os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
+                    "model_id": os.environ.get("BEDROCK_MODEL_ID",""),
+                    "question": user_msg,
+                    "context_chunks": context_chunks or [],
+                    "sources": [],
+                    "chunk_metadata": chunk_metadata or [],
+                    "custom_prompt": LEGAL_SYSTEM_PROMPT,
+                    "temperature": 0.1,
+                    "top_p": 0.9,
+                    "max_tokens": 1024,
+                    "repeat_penalty": 1.1
+                }
+                r = requests.post(f"{API_ROOT}/search/bedrock_rag", json=bed_payload, auth=auth_tuple, timeout=180)
+                data = r.json() if r.ok else {}
+                ans = data.get("answer","") or ""
+                placeholder.markdown(ans)
+                st.session_state["chat_msgs"].append({"role": "assistant", "content": ans})
+            except Exception as e:
+                err = f"[bedrock-error] {e}"
+                placeholder.markdown(err)
+                st.session_state["chat_msgs"].append({"role": "assistant", "content": err})
+
 st.markdown("---")
-st.caption("© 2025 Legalsearch Demo | Parallel legal ingestion, explainable legal AI, pgvector & Ollama")
+st.caption("© 2025 CogNeo | Parallel ingestion, explainable AI, pgvector & Ollama")

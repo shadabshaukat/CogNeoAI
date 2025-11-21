@@ -1,10 +1,10 @@
 """
-DB store dispatcher for AUSLegalSearch v3.
+DB store dispatcher for CogNeo v3.
 
 Purpose:
 - Preserve existing import surface (from db.store import ...).
 - Selects the concrete backend at import-time based on environment:
-    AUSLEGALSEARCH_DB_BACKEND=postgres | oracle
+    COGNEO_DB_BACKEND=postgres | oracle
 - Default is 'postgres' to maintain current behavior.
 
 Backends:
@@ -43,7 +43,7 @@ def _load_dotenv_file():
 # Load .env before reading backend selector (helps when running ingest/* via python -m)
 _load_dotenv_file()
 
-_BACKEND = (_os.environ.get("AUSLEGALSEARCH_DB_BACKEND", "postgres") or "postgres").lower()
+_BACKEND = (_os.environ.get("COGNEO_DB_BACKEND", "postgres") or "postgres").lower()
 
 if _BACKEND in ("oracle", "ora", "oracle23ai"):
     from db.store_oracle import *  # noqa: F401,F403

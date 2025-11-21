@@ -1,5 +1,5 @@
 """
-Semantic, token-aware chunking utilities for AUSLegalSearch v3 (beta dataset).
+Semantic, token-aware chunking utilities for CogNeo v3 (beta dataset).
 
 Design goals:
 - Modern, tokenizer-agnostic approximation of token counts for fast, dependency-light operation.
@@ -12,7 +12,7 @@ This module is standalone (no DB), focused purely on chunking logic.
 
 Safety hardening:
 - Uses the third-party 'regex' module (if installed) with per-call timeouts to avoid catastrophic backtracking hangs.
-- Controlled by AUSLEGALSEARCH_REGEX_TIMEOUT_MS (default 200ms per regex operation).
+- Controlled by COGNEO_REGEX_TIMEOUT_MS (default 200ms per regex operation).
 - If timeout occurs in dashed-header parsing or sentence splitting, falls back to simplified, safe logic.
 """
 
@@ -30,7 +30,7 @@ except Exception:
     _re2 = None  # Fallback to stdlib re without timeouts
 
 # Timeout (ms) for individual regex operations when using 'regex' module
-_REGEX_TIMEOUT_MS = int(os.environ.get("AUSLEGALSEARCH_REGEX_TIMEOUT_MS", "200"))
+_REGEX_TIMEOUT_MS = int(os.environ.get("COGNEO_REGEX_TIMEOUT_MS", "200"))
 _REGEX_TIMEOUT_S = max(0.01, _REGEX_TIMEOUT_MS / 1000.0)  # seconds; clamp to sane minimum
 
 # Defaults tuned to common LLM context windows and RAG best-practices

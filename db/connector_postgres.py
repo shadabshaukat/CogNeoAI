@@ -1,5 +1,5 @@
 """
-Database connection module for auslegalsearchv3 (Postgres backend).
+Database connection module for cogneo (Postgres backend).
 - Connects to PostgreSQL with pgvector extension enabled.
 - Provides SQLAlchemy engine and session makers.
 - Checks/creates vector extension if needed.
@@ -39,28 +39,28 @@ def _load_dotenv_file():
 # Load .env before reading variables (exported env vars still take precedence)
 _load_dotenv_file()
 
-DB_HOST = os.environ.get("AUSLEGALSEARCH_DB_HOST")
-DB_PORT = os.environ.get("AUSLEGALSEARCH_DB_PORT")
-DB_USER = os.environ.get("AUSLEGALSEARCH_DB_USER")
-DB_PASSWORD = os.environ.get("AUSLEGALSEARCH_DB_PASSWORD")
-DB_NAME = os.environ.get("AUSLEGALSEARCH_DB_NAME")
+DB_HOST = os.environ.get("COGNEO_DB_HOST")
+DB_PORT = os.environ.get("COGNEO_DB_PORT")
+DB_USER = os.environ.get("COGNEO_DB_USER")
+DB_PASSWORD = os.environ.get("COGNEO_DB_PASSWORD")
+DB_NAME = os.environ.get("COGNEO_DB_NAME")
 
-DB_URL = os.environ.get("AUSLEGALSEARCH_DB_URL")
+DB_URL = os.environ.get("COGNEO_DB_URL")
 if not DB_URL:
     # Require explicit env configuration to avoid accidental defaults.
     required = {
-        "AUSLEGALSEARCH_DB_HOST": DB_HOST,
-        "AUSLEGALSEARCH_DB_PORT": DB_PORT,
-        "AUSLEGALSEARCH_DB_USER": DB_USER,
-        "AUSLEGALSEARCH_DB_PASSWORD": DB_PASSWORD,
-        "AUSLEGALSEARCH_DB_NAME": DB_NAME,
+        "COGNEO_DB_HOST": DB_HOST,
+        "COGNEO_DB_PORT": DB_PORT,
+        "COGNEO_DB_USER": DB_USER,
+        "COGNEO_DB_PASSWORD": DB_PASSWORD,
+        "COGNEO_DB_NAME": DB_NAME,
     }
     missing = [k for k, v in required.items() if not v]
     if missing:
         raise RuntimeError(
             "Missing required DB env vars: "
             + ", ".join(missing)
-            + ". Provide AUSLEGALSEARCH_DB_URL or individual AUSLEGALSEARCH_DB_* variables (see BetaDataLoad.md)."
+            + ". Provide COGNEO_DB_URL or individual COGNEO_DB_* variables (see BetaDataLoad.md)."
         )
     # Safely quote credentials in case they contain special characters like @ : / # & +
     user_q = quote_plus(DB_USER)
@@ -73,11 +73,11 @@ if not DB_URL:
 # - pool_recycle: recycle connections periodically to avoid server-side timeouts
 # - pool_timeout: bound waiting time for a free connection
 # - connect_args: psycopg2 keepalives + connect_timeout + optional statement_timeout
-POOL_SIZE = int(os.environ.get("AUSLEGALSEARCH_DB_POOL_SIZE", "10"))
-MAX_OVERFLOW = int(os.environ.get("AUSLEGALSEARCH_DB_MAX_OVERFLOW", "20"))
-POOL_RECYCLE = int(os.environ.get("AUSLEGALSEARCH_DB_POOL_RECYCLE", "1800"))  # seconds
-POOL_TIMEOUT = int(os.environ.get("AUSLEGALSEARCH_DB_POOL_TIMEOUT", "30"))    # seconds
-STATEMENT_TIMEOUT_MS = os.environ.get("AUSLEGALSEARCH_DB_STATEMENT_TIMEOUT_MS")  # e.g. "60000"
+POOL_SIZE = int(os.environ.get("COGNEO_DB_POOL_SIZE", "10"))
+MAX_OVERFLOW = int(os.environ.get("COGNEO_DB_MAX_OVERFLOW", "20"))
+POOL_RECYCLE = int(os.environ.get("COGNEO_DB_POOL_RECYCLE", "1800"))  # seconds
+POOL_TIMEOUT = int(os.environ.get("COGNEO_DB_POOL_TIMEOUT", "30"))    # seconds
+STATEMENT_TIMEOUT_MS = os.environ.get("COGNEO_DB_STATEMENT_TIMEOUT_MS")  # e.g. "60000"
 
 connect_opts = []
 if STATEMENT_TIMEOUT_MS:

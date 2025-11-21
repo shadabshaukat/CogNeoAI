@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Delete all records for a given URL across embeddings (by chunk_metadata->>'url')
-and the corresponding documents rows in auslegalsearchv3.
+and the corresponding documents rows in cogneo.
 
 - Locates embeddings where chunk_metadata->>'url' = :url
 - Deletes those embeddings
@@ -10,7 +10,7 @@ and the corresponding documents rows in auslegalsearchv3.
 
 Environment/DB connection:
 - Inherits DB connection settings from .env via db.connector's built-in .env loader.
-- Alternatively, export AUSLEGALSEARCH_DB_URL or AUSLEGALSEARCH_DB_* (HOST/PORT/USER/PASSWORD/NAME).
+- Alternatively, export COGNEO_DB_URL or COGNEO_DB_* (HOST/PORT/USER/PASSWORD/NAME).
 
 Usage:
   # Dry run: preview what would be deleted
@@ -190,7 +190,7 @@ def main():
     # --show-sql: if URLs are provided, print literal SQL per URL; otherwise print template with :url
     if args.show_sql:
         if urls:
-            max_urls = int(os.environ.get("AUSLEGALSEARCH_SHOWSQL_MAXURLS", "20"))
+            max_urls = int(os.environ.get("COGNEO_SHOWSQL_MAXURLS", "20"))
             to_print = urls[:max_urls]
             for u in to_print:
                 uq = _sql_quote(u)

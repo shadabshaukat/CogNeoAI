@@ -51,7 +51,7 @@ def parse_html(filepath: str) -> Dict[str, Any]:
         print(f"Error parsing HTML {filepath}: {e}")
         return {}
 
-def ingest_auslegalsearch():
+def ingest_cogneo():
     """
     Main entrypoint for ingest pipeline.
     """
@@ -73,7 +73,7 @@ def ingest_auslegalsearch():
             print(f"Skipped {filepath}")
 
 if __name__ == "__main__":
-    ingest_auslegalsearch()
+    ingest_cogneo()
 
 """
 Notes:

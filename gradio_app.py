@@ -1,5 +1,5 @@
 """ 
-AUSLegalSearchv3 Gradio UI:
+CogNeo Gradio UI:
 - Tabs for Hybrid Search, Vector Search, RAG (with supersystem prompt), Conversational Chat, and Agentic Chat (chain-of-thought for both Ollama and OCI GenAI).
 """
 
@@ -19,14 +19,14 @@ import re
 
 from db.store import create_all_tables
 # Ensure DB schema on UI startup when enabled
-if os.environ.get("AUSLEGALSEARCH_AUTO_DDL", "1") == "1":
+if os.environ.get("COGNEO_AUTO_DDL", "1") == "1":
     try:
         create_all_tables()
         print("[gradio] DB schema ensured (AUTO_DDL=1)")
     except Exception as e:
         print(f"[gradio] DB schema ensure failed: {e}")
 
-API_ROOT = os.environ.get("AUSLEGALSEARCH_API_URL", "http://localhost:8000")
+API_ROOT = os.environ.get("COGNEO_API_URL", "http://localhost:8000")
 SESS = type("Session", (), {"user": None, "auth": None})()
 SESS.auth = None
 
@@ -418,7 +418,7 @@ def fts_search_fn(query, top_k):
         """
     return out
 
-with gr.Blocks(title="AUSLegalSearch RAG UI", css="""
+with gr.Blocks(title="CogNeo RAG UI", css="""
 #llm-answer-box {
     color: #10890b !important;
     font-size: 1.13em;
@@ -538,7 +538,7 @@ with gr.Blocks(title="AUSLegalSearch RAG UI", css="""
   to {transform: rotate(360deg);}
 }
 """) as demo:
-    gr.Markdown("# AUSLegalSearch RAG Platform")
+    gr.Markdown("# CogNeo RAG Platform")
 
     login_box = gr.Row(visible=True)
     with login_box:
@@ -551,9 +551,9 @@ with gr.Blocks(title="AUSLegalSearch RAG UI", css="""
     with gr.Row(visible=False) as app_panel:
         with gr.Tabs():
             with gr.Tab("Hybrid Search"):
-                hybrid_query = gr.Textbox(label="Enter a legal research question", lines=2)
+                hybrid_query = gr.Textbox(label="Enter a research question", lines=2)
                 hybrid_top_k = gr.Number(label="Top K Results", value=10, precision=0)
-                hybrid_alpha = gr.Slider(label="Hybrid weighting (semantic/keyword)", value=0.5, minimum=0.0, maximum=1.0)
+                hybrid_alpha = gr.Slider(label="Hybrid weighting (0 = keyword, 1 = semantic)", value=0.5, minimum=0.0, maximum=1.0)
                 hybrid_btn = gr.Button("Hybrid Search")
                 hybrid_results = gr.HTML(label="Results", value="", show_label=False)
                 hybrid_btn.click(
@@ -562,7 +562,7 @@ with gr.Blocks(title="AUSLegalSearch RAG UI", css="""
                     outputs=[hybrid_results]
                 )
             with gr.Tab("RAG"):
-                gr.Markdown("#### RAG-Powered Legal Chat")
+                gr.Markdown("#### RAG-Powered Chat")
                 rag_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI"], value="Local Ollama")
                 rag_ollama_model = gr.Dropdown(label="Ollama Model", choices=[], visible=True)
                 rag_oci_model = gr.Dropdown(label="OCI GenAI Model", choices=[], visible=False)
@@ -579,7 +579,7 @@ with gr.Blocks(title="AUSLegalSearch RAG UI", css="""
                 rag_max_tokens = gr.Number(label="Max Tokens", value=1024, precision=0)
                 rag_repeat_penalty = gr.Slider(label="Repeat Penalty", value=1.1, minimum=0.5, maximum=2.0, step=0.01)
                 # (Removed old update_rag_model_dropdowns handler; only use update_rag_model_dropdowns_hide_oci above)
-                rag_question = gr.Textbox(label="Enter your legal or compliance question", lines=2)
+                rag_question = gr.Textbox(label="Enter your question", lines=2)
                 rag_ask_btn = gr.Button("Ask")
                 rag_answer = gr.HTML(label="Answer", elem_id="llm-answer-box", value="")
                 rag_context = gr.HTML(label="Context / Sources", value="", show_label=False)
@@ -589,7 +589,7 @@ with gr.Blocks(title="AUSLegalSearch RAG UI", css="""
                     outputs=[rag_answer, rag_context, gr.State()]
                 )
             with gr.Tab("Full Text Search"):
-                gr.Markdown("**Full Text Search** &mdash; phrase and stemmed search across legal documents and/or all indexed metadata fields. Choose search area below.")
+                gr.Markdown("**Full Text Search** &mdash; phrase and stemmed search across documents and/or all indexed metadata fields. Choose search area below.")
                 fts_q = gr.Textbox(label="Search Query", lines=2)
                 fts_top_k = gr.Number(label="Max Results", value=10, precision=0)
                 fts_mode = gr.Dropdown(

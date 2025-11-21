@@ -1,5 +1,5 @@
 """
-Parallel beta ingestion worker for AUSLegalSearch v3.
+Parallel beta ingestion worker for CogNeo v3.
 
 This worker:
 - Processes a provided list of files (via --partition_file) OR discovers all files under --root.
@@ -49,20 +49,20 @@ from db.store import (
 from db.connector import DB_URL, engine, BACKEND
 
 # Timeouts (seconds). Tunable via env.
-PARSE_TIMEOUT = int(os.environ.get("AUSLEGALSEARCH_TIMEOUT_PARSE", "60"))
-CHUNK_TIMEOUT = int(os.environ.get("AUSLEGALSEARCH_TIMEOUT_CHUNK", "90"))
-EMBED_BATCH_TIMEOUT = int(os.environ.get("AUSLEGALSEARCH_TIMEOUT_EMBED_BATCH", "180"))
-INSERT_TIMEOUT = int(os.environ.get("AUSLEGALSEARCH_TIMEOUT_INSERT", "120"))
-SELECT_TIMEOUT = int(os.environ.get("AUSLEGALSEARCH_TIMEOUT_SELECT", "30"))
-DB_MAX_RETRIES = int(os.environ.get("AUSLEGALSEARCH_DB_MAX_RETRIES", "3"))
+PARSE_TIMEOUT = int(os.environ.get("COGNEO_TIMEOUT_PARSE", "60"))
+CHUNK_TIMEOUT = int(os.environ.get("COGNEO_TIMEOUT_CHUNK", "90"))
+EMBED_BATCH_TIMEOUT = int(os.environ.get("COGNEO_TIMEOUT_EMBED_BATCH", "180"))
+INSERT_TIMEOUT = int(os.environ.get("COGNEO_TIMEOUT_INSERT", "120"))
+SELECT_TIMEOUT = int(os.environ.get("COGNEO_TIMEOUT_SELECT", "30"))
+DB_MAX_RETRIES = int(os.environ.get("COGNEO_DB_MAX_RETRIES", "3"))
 
 # CPU parallelism for parse+chunk stage and prefetch buffer
 _CORES = os.cpu_count() or 2
 # 0 or unset -> auto: min(cores-1, 8), at least 1
-CPU_WORKERS = int(os.environ.get("AUSLEGALSEARCH_CPU_WORKERS", "0"))
+CPU_WORKERS = int(os.environ.get("COGNEO_CPU_WORKERS", "0"))
 if CPU_WORKERS <= 0:
     CPU_WORKERS = max(1, min(8, _CORES - 1))
-PIPELINE_PREFETCH = int(os.environ.get("AUSLEGALSEARCH_PIPELINE_PREFETCH", "0"))
+PIPELINE_PREFETCH = int(os.environ.get("COGNEO_PIPELINE_PREFETCH", "0"))
 if PIPELINE_PREFETCH <= 0:
     PIPELINE_PREFETCH = 64
 
@@ -216,7 +216,7 @@ def _append_log_line(log_dir: str, session_name: str, file_path: str, success: b
 
 
 def _metrics_enabled() -> bool:
-    return os.environ.get("AUSLEGALSEARCH_LOG_METRICS", "1") != "0"
+    return os.environ.get("COGNEO_LOG_METRICS", "1") != "0"
 
 
 def _append_success_metrics_line(
@@ -320,7 +320,7 @@ def _write_logs(log_dir: str, session_name: str, successes: List[str], failures:
     return {"success_log": succ_path, "error_log": fail_path}
 
 def _error_details_enabled() -> bool:
-    return os.environ.get("AUSLEGALSEARCH_ERROR_DETAILS", "1") == "1"
+    return os.environ.get("COGNEO_ERROR_DETAILS", "1") == "1"
 
 def _append_error_detail(
     log_dir: str,
@@ -346,7 +346,7 @@ def _append_error_detail(
             "meta": meta or {},
             "ts": int(time.time() * 1000),
         }
-        if os.environ.get("AUSLEGALSEARCH_ERROR_TRACE", "0") == "1":
+        if os.environ.get("COGNEO_ERROR_TRACE", "0") == "1":
             rec["traceback"] = tb or ""
         path = os.path.join(log_dir, f"{session_name}.errors.ndjson")
         with open(path, "a", encoding="utf-8") as f:
@@ -358,10 +358,10 @@ def _append_error_detail(
 
 def _maybe_print_counts(dbs, session_name: str, label: str) -> None:
     """
-    If AUSLEGALSEARCH_DEBUG_COUNTS=1, print current documents/embeddings counts with a label.
+    If COGNEO_DEBUG_COUNTS=1, print current documents/embeddings counts with a label.
     """
     try:
-        if os.environ.get("AUSLEGALSEARCH_DEBUG_COUNTS", "0") != "1":
+        if os.environ.get("COGNEO_DEBUG_COUNTS", "0") != "1":
             return
         docs = dbs.execute(text("SELECT count(*) FROM documents")).scalar()
         embs = dbs.execute(text("SELECT count(*) FROM embeddings")).scalar()
@@ -516,8 +516,8 @@ def _fallback_chunk_text(text: str, base_meta: Dict[str, Any], cfg: ChunkingConf
     Fallback chunker that slices text by characters when semantic chunker times out or fails.
     Uses configurable window/overlap to create chunk dicts compatible with downstream pipeline.
     """
-    chars_per_chunk = int(os.environ.get("AUSLEGALSEARCH_FALLBACK_CHARS_PER_CHUNK", "4000"))
-    overlap_chars = int(os.environ.get("AUSLEGALSEARCH_FALLBACK_OVERLAP_CHARS", "200"))
+    chars_per_chunk = int(os.environ.get("COGNEO_FALLBACK_CHARS_PER_CHUNK", "4000"))
+    overlap_chars = int(os.environ.get("COGNEO_FALLBACK_OVERLAP_CHARS", "200"))
     if chars_per_chunk <= 0:
         chars_per_chunk = 4000
     if overlap_chars < 0:
@@ -601,18 +601,29 @@ def _cpu_prepare_file(
         )
         chunk_strategy = None
         t1 = time.time()
+        file_chunks = []
+        try:
+            from ingest.domains import load_domain
+            _dm = load_domain()
+            _dc = _dm.chunk_document(base_doc["text"], base_meta=base_meta, cfg=cfg)
+            if _dc:
+                file_chunks = _dc
+                chunk_strategy = "domain"
+        except Exception:
+            pass
         with _deadline(CHUNK_TIMEOUT):
-            # Try dashed first
-            file_chunks = chunk_legislation_dashed_semantic(base_doc["text"], base_meta=base_meta, cfg=cfg)
-            if file_chunks:
-                chunk_strategy = "dashed-semantic"
-            else:
-                # Then semantic
+            # Try dashed first, only if domain pack did not return chunks
+            if not file_chunks:
+                file_chunks = chunk_legislation_dashed_semantic(base_doc["text"], base_meta=base_meta, cfg=cfg)
+                if file_chunks:
+                    chunk_strategy = "dashed-semantic"
+            # Then semantic if still none
+            if not file_chunks:
                 file_chunks = chunk_document_semantic(base_doc["text"], base_meta=base_meta, cfg=cfg)
                 if file_chunks:
                     chunk_strategy = "semantic"
             # Optional RCTS fallback
-            if (not file_chunks) and os.environ.get("AUSLEGALSEARCH_USE_RCTS_GENERIC", "0") == "1":
+            if (not file_chunks) and os.environ.get("COGNEO_USE_RCTS_GENERIC", "0") == "1":
                 rcts_chunks = chunk_generic_rcts(base_doc["text"], base_meta=base_meta, cfg=cfg)
                 if rcts_chunks:
                     file_chunks = rcts_chunks
@@ -758,7 +769,7 @@ def run_worker_pipelined(
             raise ValueError("Either --partition_file or --root must be provided")
         files = find_all_supported_files(root_dir)
     # Optional: sort this worker's files by size desc to reduce tail latency (env-enabled by default)
-    if os.environ.get("AUSLEGALSEARCH_SORT_WORKER_FILES", "1") != "0":
+    if os.environ.get("COGNEO_SORT_WORKER_FILES", "1") != "0":
         try:
             files = _sort_by_size_desc(files)
             print(f"[beta_worker] {session_name}: sorted {len(files)} files by size desc for better GPU utilization", flush=True)
@@ -784,7 +795,7 @@ def run_worker_pipelined(
     _err_path = os.path.join(log_dir, f"{session_name}.error.log")
     print(f"[beta_worker] {session_name}: DB = {_safe_db}", flush=True)
     print(f"[beta_worker] {session_name}: logs: success->{_succ_path}, error->{_err_path}", flush=True)
-    print(f"[beta_worker] {session_name}: starting. files={total_files}, batch_size={int(os.environ.get('AUSLEGALSEARCH_EMBED_BATCH','64'))}, cpu_workers={CPU_WORKERS}, prefetch={PIPELINE_PREFETCH}", flush=True)
+    print(f"[beta_worker] {session_name}: starting. files={total_files}, batch_size={int(os.environ.get('COGNEO_EMBED_BATCH','64'))}, cpu_workers={CPU_WORKERS}, prefetch={PIPELINE_PREFETCH}", flush=True)
 
     # Producer-consumer pipeline
     with SessionLocal() as dbs:
@@ -914,9 +925,9 @@ def run_worker_pipelined(
                     print(f"[beta_worker] {session_name}: chunk done {res.get('chunk_ms')}ms chunks={current_chunk_count}", flush=True)
 
                     # embed
-                    print(f"[beta_worker] {session_name}: embed start batch={int(os.environ.get('AUSLEGALSEARCH_EMBED_BATCH','64'))} texts={len(texts)}", flush=True)
+                    print(f"[beta_worker] {session_name}: embed start batch={int(os.environ.get('COGNEO_EMBED_BATCH','64'))} texts={len(texts)}", flush=True)
                     tE = time.time()
-                    vecs = _embed_in_batches(embedder, texts, batch_size=int(os.environ.get("AUSLEGALSEARCH_EMBED_BATCH","64")))
+                    vecs = _embed_in_batches(embedder, texts, batch_size=int(os.environ.get("COGNEO_EMBED_BATCH","64")))
                     embed_ms = int((time.time() - tE) * 1000)
                     print(f"[beta_worker] {session_name}: embed done {embed_ms}ms", flush=True)
 
@@ -970,7 +981,7 @@ def run_worker_pipelined(
 
                     if done_count % 10 == 0 or inserted > 0:
                         print(f"[beta_worker] {session_name}: OK {done_count}/{total_files}, chunks+={inserted}, total_chunks={processed_chunks}", flush=True)
-                    if os.environ.get("AUSLEGALSEARCH_DEBUG_COUNTS", "0") == "1" and done_count % 50 == 0:
+                    if os.environ.get("COGNEO_DEBUG_COUNTS", "0") == "1" and done_count % 50 == 0:
                         _maybe_print_counts(dbs, session_name, f"after {done_count} files")
                     break  # process next completion
 
@@ -998,7 +1009,7 @@ def run_worker(
     Main loop for this worker.
     """
     # Use pipelined mode when multiple CPU workers are configured
-    if CPU_WORKERS > 1 or int(os.environ.get("AUSLEGALSEARCH_PIPELINE_PREFETCH", str(PIPELINE_PREFETCH))) > 0:
+    if CPU_WORKERS > 1 or int(os.environ.get("COGNEO_PIPELINE_PREFETCH", str(PIPELINE_PREFETCH))) > 0:
         return run_worker_pipelined(session_name, root_dir, partition_file, embedding_model, token_target, token_overlap, token_max, log_dir)
 
     # Early diagnostics
@@ -1029,7 +1040,7 @@ def run_worker(
             raise ValueError("Either --partition_file or --root must be provided")
         files = find_all_supported_files(root_dir)
     # Optional: sort this worker's files by size desc to reduce tail latency (env-enabled by default)
-    if os.environ.get("AUSLEGALSEARCH_SORT_WORKER_FILES", "1") != "0":
+    if os.environ.get("COGNEO_SORT_WORKER_FILES", "1") != "0":
         try:
             files = _sort_by_size_desc(files)
             print(f"[beta_worker] {session_name}: sorted {len(files)} files by size desc for better GPU utilization", flush=True)
@@ -1043,7 +1054,7 @@ def run_worker(
         max_tokens=int(token_max),
     )
 
-    batch_size = int(os.environ.get("AUSLEGALSEARCH_EMBED_BATCH", "64"))
+    batch_size = int(os.environ.get("COGNEO_EMBED_BATCH", "64"))
 
     processed_chunks = 0
     successes: List[str] = []
@@ -1125,18 +1136,29 @@ def run_worker(
                 current_stage = "chunk"
                 stage_start = time.time()
                 print(f"[beta_worker] {session_name}: chunk start", flush=True)
+                file_chunks = []
+                try:
+                    from ingest.domains import load_domain
+                    _dm = load_domain()
+                    _dc = _dm.chunk_document(base_doc["text"], base_meta=base_meta, cfg=cfg)
+                    if _dc:
+                        file_chunks = _dc
+                        chunk_strategy = "domain"
+                except Exception:
+                    pass
                 with _deadline(CHUNK_TIMEOUT):
                     # Try dashed-header aware chunking first (works for any dashed-header format).
-                    file_chunks = chunk_legislation_dashed_semantic(base_doc["text"], base_meta=base_meta, cfg=cfg)
-                    if file_chunks:
-                        chunk_strategy = "dashed-semantic"
-                    else:
-                        # Fallback to generic semantic chunking (heading/sentences with same cfg)
+                    if not file_chunks:
+                        file_chunks = chunk_legislation_dashed_semantic(base_doc["text"], base_meta=base_meta, cfg=cfg)
+                        if file_chunks:
+                            chunk_strategy = "dashed-semantic"
+                    # Fallback to generic semantic chunking (heading/sentences with same cfg)
+                    if not file_chunks:
                         file_chunks = chunk_document_semantic(base_doc["text"], base_meta=base_meta, cfg=cfg)
                         if file_chunks:
                             chunk_strategy = "semantic"
                     # Optional RCTS fallback for generic types (env-controlled)
-                    if (not file_chunks) and os.environ.get("AUSLEGALSEARCH_USE_RCTS_GENERIC", "0") == "1":
+                    if (not file_chunks) and os.environ.get("COGNEO_USE_RCTS_GENERIC", "0") == "1":
                         rcts_chunks = chunk_generic_rcts(base_doc["text"], base_meta=base_meta, cfg=cfg)
                         if rcts_chunks:
                             file_chunks = rcts_chunks
@@ -1242,13 +1264,13 @@ def run_worker(
 
                 if idx_f % 10 == 0 or inserted > 0:
                     print(f"[beta_worker] {session_name}: OK {idx_f}/{total_files}, chunks+={inserted}, total_chunks={processed_chunks}", flush=True)
-                if os.environ.get("AUSLEGALSEARCH_DEBUG_COUNTS", "0") == "1" and idx_f % 50 == 0:
+                if os.environ.get("COGNEO_DEBUG_COUNTS", "0") == "1" and idx_f % 50 == 0:
                     _maybe_print_counts(dbs, session_name, f"after {idx_f} files")
 
             except _Timeout as e:
                 # Try fallback if timeout occurred during chunking
                 if (current_stage == "chunk"
-                    and os.environ.get("AUSLEGALSEARCH_FALLBACK_CHUNK_ON_TIMEOUT", "1") != "0"
+                    and os.environ.get("COGNEO_FALLBACK_CHUNK_ON_TIMEOUT", "1") != "0"
                     and "base_doc" in locals()
                     and isinstance(base_doc, dict)
                     and base_doc.get("text")):
@@ -1327,7 +1349,7 @@ def run_worker(
             except Exception as e:
                 # If failure in chunk stage, attempt naive fallback chunking
                 if (current_stage == "chunk"
-                    and os.environ.get("AUSLEGALSEARCH_FALLBACK_CHUNK_ON_TIMEOUT", "1") != "0"
+                    and os.environ.get("COGNEO_FALLBACK_CHUNK_ON_TIMEOUT", "1") != "0"
                     and "base_doc" in locals()
                     and isinstance(base_doc, dict)
                     and base_doc.get("text")):

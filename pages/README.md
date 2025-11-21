@@ -1,4 +1,4 @@
-# AUSLegalSearch v3 — Streamlit UI (pages)
+# CogNeo v3 — Streamlit UI (pages)
 
 Interactive Streamlit UI for login and legal chat with Retrieval Augmented Generation (RAG). The UI exposes a clean chat experience with per-source cards, metadata, and controls for LLM decoding parameters.
 
@@ -37,14 +37,14 @@ pip install -r requirements.txt
 ```
 
 - Database (for auth and chat logs)
-  - Configure Postgres connection (either AUSLEGALSEARCH_DB_URL or the AUSLEGALSEARCH_DB_HOST/PORT/USER/PASSWORD/NAME variables).
-  - The DB schema is created automatically by API on startup when `AUSLEGALSEARCH_AUTO_DDL=1` or can be created manually via `db.store.create_all_tables()`.
+  - Configure Postgres connection (either COGNEO_DB_URL or the COGNEO_DB_HOST/PORT/USER/PASSWORD/NAME variables).
+  - The DB schema is created automatically by API on startup when `COGNEO_AUTO_DDL=1` or can be created manually via `db.store.create_all_tables()`.
 
 - Embedding model (for vector retrieval in UI)
   - The chat page calls `embedding.Embedder()` to embed queries for semantic retrieval.
   - Ensure the embedding model and DB embedding dimension are aligned:
-    - `AUSLEGALSEARCH_EMBED_MODEL` (default: nomic-ai/nomic-embed-text-v1.5)
-    - `AUSLEGALSEARCH_EMBED_DIM` (default 768; must match the model used during ingestion)
+    - `COGNEO_EMBED_MODEL` (default: nomic-ai/nomic-embed-text-v1.5)
+    - `COGNEO_EMBED_DIM` (default 768; must match the model used during ingestion)
 
 
 ## Running the UI
@@ -149,7 +149,7 @@ If running behind a reverse proxy, configure Streamlit’s base URL and CORS/sec
   - Verify Ollama is running and reachable at `http://localhost:11434`
   - Install models with `ollama pull llama3` (or other)
 - Vector retrieval returns no results
-  - Ensure embeddings exist in the DB and that `AUSLEGALSEARCH_EMBED_DIM` matches the model dimension
+  - Ensure embeddings exist in the DB and that `COGNEO_EMBED_DIM` matches the model dimension
   - Confirm DB connectivity and that `create_all_tables()` ran at least once
 
 

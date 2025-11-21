@@ -1,5 +1,5 @@
 -- schema-post-load/create_indexes_expression.sql
--- Post-load indexing for AUSLegalSearch v3 using EXPRESSION INDEXES ONLY.
+-- Post-load indexing for CogNeo v3 using EXPRESSION INDEXES ONLY.
 -- Use this variant if you want to AVOID any table rewrite (no generated columns).
 -- These indexes are safe to add after data load and do not require re-ingestion.
 -- Run during a low-traffic window. If your tool rejects CONCURRENTLY, keep as-is.

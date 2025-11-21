@@ -1,5 +1,5 @@
 """
-FastAPI backend for AUSLegalSearchv3, with legal-tuned hybrid QA, legal-aware chunking, RAG, reranker interface, OCI GenAI, Oracle 23ai DB, and full system prompt config.
+FastAPI backend for CogNeo, with legal-tuned hybrid QA, legal-aware chunking, RAG, reranker interface, OCI GenAI, Oracle 23ai DB, and full system prompt config.
 """
 
 # Always load .env if present
@@ -17,16 +17,33 @@ import os
 import secrets
 import json
 import inspect
+from datetime import datetime, timedelta
+
+try:
+    import jwt  # PyJWT
+except Exception:
+    jwt = None
+
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+
+try:
+    from starlette_exporter import PrometheusMiddleware, handle_metrics
+except Exception:
+    PrometheusMiddleware = None
+    handle_metrics = None
 
 from db.store import (
     create_user, get_user_by_email, hash_password, check_password,
     add_document, add_embedding, start_session, get_session, complete_session, fail_session, update_session_progress,
-    search_vector, search_bm25, search_hybrid, get_chat_session, save_chat_session,
-    get_active_sessions, get_resume_sessions, search_fts, create_all_tables
+    get_chat_session, save_chat_session,
+    get_active_sessions, get_resume_sessions
 )
+from storage.registry import get_adapter
 from embedding.embedder import Embedder
 from rag.rag_pipeline import RAGPipeline, list_ollama_models
 from rag.oci_rag_pipeline import OCIGenAIPipeline
+from rag.bedrock_pipeline import BedrockPipeline
 from db.oracle23ai_connector import Oracle23AIConnector
 from ingest.loader import walk_legal_files, parse_txt, parse_html, chunk_document
 
@@ -69,23 +86,92 @@ def download_hf_model(hf_repo):
         print(f"Could not download {hf_repo}: {e}")
 
 app = FastAPI(
-    title="AUSLegalSearchv3 API",
+    title="CogNeo API",
     description="REST API for legal vector search, ingestion, RAG, chat, reranker, system prompt, OCI GenAI, and Oracle 23ai DB.",
     version="0.40"
 )
 
+# CORS (env-gated)
+if os.environ.get("COGNEO_CORS_ENABLE", "1") == "1":
+    origins = [o.strip() for o in os.environ.get("COGNEO_CORS_ALLOW_ORIGINS", "*").split(",")]
+    methods = [m.strip() for m in os.environ.get("COGNEO_CORS_ALLOW_METHODS", "*").split(",")]
+    headers = [h.strip() for h in os.environ.get("COGNEO_CORS_ALLOW_HEADERS", "*").split(",")]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=os.environ.get("COGNEO_CORS_ALLOW_CREDENTIALS", "1") == "1",
+        allow_methods=methods,
+        allow_headers=headers,
+    )
+
+# Prometheus metrics (env-gated)
+if os.environ.get("COGNEO_PROMETHEUS_ENABLE", "1") == "1" and PrometheusMiddleware:
+    app.add_middleware(PrometheusMiddleware)
+    try:
+        app.add_route("/metrics", handle_metrics)
+    except Exception:
+        pass
+
+# Simple in-process rate limiting (env-gated)
+from fastapi import Request
+import time as _time
+_RATE_ENABLED = os.environ.get("COGNEO_RATE_LIMIT_ENABLE", "0") == "1"
+_RATE_REQ = int(os.environ.get("COGNEO_RATE_LIMIT_REQUESTS", "60"))
+_RATE_WIN = int(os.environ.get("COGNEO_RATE_LIMIT_WINDOW_S", "60"))
+_RATE_BUCKET = {}
+
+@app.middleware("http")
+async def _rate_limit_mw(request: Request, call_next):
+    if not _RATE_ENABLED:
+        return await call_next(request)
+    key = request.client.host
+    now = int(_time.time())
+    bucket = _RATE_BUCKET.get(key, [])
+    bucket = [t for t in bucket if now - t < _RATE_WIN]
+    if len(bucket) >= _RATE_REQ:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    bucket.append(now)
+    _RATE_BUCKET[key] = bucket
+    return await call_next(request)
+
 # Ensure DB schema on API startup when enabled
 @app.on_event("startup")
 async def _bootstrap_db_schema():
-    if os.environ.get("AUSLEGALSEARCH_AUTO_DDL", "1") == "1":
+    if os.environ.get("COGNEO_AUTO_DDL", "1") == "1":
         try:
-            create_all_tables()
+            get_adapter().create_all_tables()
             print("[fastapi] DB schema ensured (AUTO_DDL=1)")
         except Exception as e:
             print(f"[fastapi] DB schema ensure failed: {e}")
 
 security = HTTPBasic()
-def get_current_user(credentials: HTTPBasicCredentials = Depends(security)):
+
+# Auth mode: basic | jwt
+AUTH_MODE = os.environ.get("COGNEO_AUTH_MODE", "basic").lower()
+JWT_SECRET = os.environ.get("COGNEO_JWT_SECRET", "changeme")
+JWT_ALG = os.environ.get("COGNEO_JWT_ALG", "HS256")
+JWT_EXPIRE_MIN = int(os.environ.get("COGNEO_JWT_EXPIRE_MIN", "60"))
+
+def _issue_token(username: str):
+    if not jwt:
+        raise HTTPException(500, "JWT library not available (pip install PyJWT)")
+    exp = datetime.utcnow() + timedelta(minutes=JWT_EXPIRE_MIN)
+    payload = {"sub": username, "exp": exp}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+class TokenReq(BaseModel):
+    username: str
+    password: str
+
+@app.post("/auth/token", tags=["auth"])
+def auth_token(req: TokenReq):
+    api_user = os.environ.get("FASTAPI_API_USER", "legal_api")
+    api_pass = os.environ.get("FASTAPI_API_PASS", "letmein")
+    if not (secrets.compare_digest(req.username, api_user) and secrets.compare_digest(req.password, api_pass)):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    return {"access_token": _issue_token(req.username), "token_type": "bearer", "expires_in": JWT_EXPIRE_MIN * 60}
+
+def _basic_user(credentials: HTTPBasicCredentials = Depends(security)):
     api_user = os.environ.get("FASTAPI_API_USER", "legal_api")
     api_pass = os.environ.get("FASTAPI_API_PASS", "letmein")
     correct_username = secrets.compare_digest(credentials.username, api_user)
@@ -97,6 +183,34 @@ def get_current_user(credentials: HTTPBasicCredentials = Depends(security)):
             headers={"WWW-Authenticate": "Basic"},
         )
     return credentials.username
+
+def _jwt_user(authorization: Optional[str] = None):
+    if not jwt:
+        raise HTTPException(500, "JWT library not available")
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1]
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        return payload.get("sub") or "user"
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+# Unified dependency used by endpoints (preserves existing call sites)
+def auth_dep(
+    credentials: HTTPBasicCredentials = Depends(security),
+    authorization: Optional[str] = Depends(lambda: None)
+):
+    if AUTH_MODE == "jwt":
+        return _jwt_user(authorization)
+    return _basic_user(credentials)
+
+# Backward-compatible alias (existing endpoints use get_current_user)
+def get_current_user(
+    credentials: HTTPBasicCredentials = Depends(security),
+    authorization: Optional[str] = Depends(lambda: None)
+):
+    return auth_dep(credentials, authorization)
 
 # --- User endpoints ---
 class UserCreateReq(BaseModel):
@@ -157,7 +271,7 @@ class SearchReq(BaseModel):
 def api_search_vector(req: SearchReq, _: str = Depends(get_current_user)):
     embedder = Embedder()
     query_vec = embedder.embed([req.query])[0]
-    hits = search_vector(query_vec, top_k=req.top_k)
+    hits = get_adapter().search_vector(query_vec, top_k=req.top_k)
     # Include metadata in results
     for hit in hits:
         if "chunk_metadata" not in hit:
@@ -169,7 +283,7 @@ def api_search_rerank(req: SearchReq, _: str = Depends(get_current_user)):
     reranker_info = get_reranker_model(req.model)
     embedder = Embedder()
     query_vec = embedder.embed([req.query])[0]
-    hits = search_vector(query_vec, top_k=max(20, req.top_k))
+    hits = get_adapter().search_vector(query_vec, top_k=max(20, req.top_k))
     hits = sorted(hits, key=lambda x: x.get("score", 0), reverse=True)[:req.top_k]
     for h in hits:
         h["reranker"] = reranker_info["name"]
@@ -212,7 +326,7 @@ def api_search_hybrid(req: HybridSearchReq, _: str = Depends(get_current_user)):
     """
     Hybrid (vector+bm25) legal search with score and citation output, now with metadata.
     """
-    results = search_hybrid(req.query, top_k=req.top_k, alpha=req.alpha)
+    results = get_adapter().search_hybrid(req.query, top_k=req.top_k, alpha=req.alpha)
     fields = ["doc_id", "chunk_index", "hybrid_score", "citation", "score", "vector_score", "bm25_score", "text", "source", "format", "chunk_metadata"]
     filtered = [
         {k: r[k] for k in fields if k in r}
@@ -256,6 +370,29 @@ def api_search_rag(req: RagReq, _: str = Depends(get_current_user)):
         **query_kwargs
     )
 
+@app.post("/search/rag_stream", tags=["search"])
+def api_search_rag_stream(req: RagReq, _: str = Depends(get_current_user)):
+    """
+    Streaming RAG endpoint; streams plain text tokens from Ollama via the RAG pipeline.
+    """
+    rag = RAGPipeline(model=req.model or "llama3")
+    def gen():
+        try:
+            for chunk in rag.stream_llama4_rag(
+                req.question,
+                context_chunks=req.context_chunks or [],
+                chunk_metadata=req.chunk_metadata or [],
+                custom_prompt=req.custom_prompt,
+                temperature=req.temperature,
+                top_p=req.top_p,
+                max_tokens=req.max_tokens,
+                repeat_penalty=req.repeat_penalty
+            ):
+                yield chunk
+        except Exception as e:
+            yield f"\n[stream-error] {e}"
+    return StreamingResponse(gen(), media_type="text/plain")
+
 # === OCI GenAI RAG endpoints ===
 class OCIConfig(BaseModel):
     compartment_id: str
@@ -296,9 +433,39 @@ def api_search_oci_rag(req: OCIRagReq, _: str = Depends(get_current_user)):
         chat_history=req.chat_history,
     )
 
+class BedrockRagReq(BaseModel):
+    region: Optional[str] = None
+    model_id: Optional[str] = None
+    question: str
+    context_chunks: Optional[List[str]] = None
+    sources: Optional[List[str]] = None
+    chunk_metadata: Optional[List[Dict[str, Any]]] = None
+    custom_prompt: Optional[str] = None
+    temperature: float = 0.1
+    top_p: float = 0.9
+    max_tokens: int = 1024
+    repeat_penalty: float = 1.1
+    chat_history: Optional[List[Dict[str, Any]]] = None
+
+@app.post("/search/bedrock_rag", tags=["search", "aws"])
+def api_search_bedrock_rag(req: BedrockRagReq, _: str = Depends(get_current_user)):
+    pipeline = BedrockPipeline(region=req.region, model_id=req.model_id)
+    return pipeline.query(
+        question=req.question,
+        context_chunks=req.context_chunks,
+        sources=req.sources,
+        chunk_metadata=req.chunk_metadata,
+        custom_prompt=req.custom_prompt,
+        temperature=req.temperature,
+        top_p=req.top_p,
+        max_tokens=req.max_tokens,
+        repeat_penalty=req.repeat_penalty,
+        chat_history=req.chat_history,
+    )
+
 # --- Conversational Chat endpoint ---
 class ChatConversationReq(BaseModel):
-    llm_source: str  # "ollama" or "oci_genai"
+    llm_source: str  # "ollama" or "oci_genai" or "bedrock"
     model: Optional[str] = None
     message: str
     chat_history: Optional[list] = None
@@ -312,7 +479,7 @@ class ChatConversationReq(BaseModel):
 
 # --- Agentic Chat endpoint ---
 class ChatAgenticReq(BaseModel):
-    llm_source: str  # "ollama" or "oci_genai"
+    llm_source: str  # "ollama" or "oci_genai" or "bedrock"
     model: Optional[str] = None
     message: str
     chat_history: Optional[list] = None
@@ -339,9 +506,9 @@ def api_agentic_chat(req: ChatAgenticReq, _: str = Depends(get_current_user)):
     )
 
     # Retrieve Top K as context (like RAG)
-    from db.store import search_hybrid
+    # using storage adapter for hybrid search
     top_k = getattr(req, "top_k", 10) or 10
-    hybrid_hits = search_hybrid(req.message, top_k=top_k, alpha=0.5)
+    hybrid_hits = get_adapter().search_hybrid(req.message, top_k=top_k, alpha=0.5)
     context_chunks = [h.get("text", "") for h in hybrid_hits]
     sources = [h.get("citation") or ((h.get("chunk_metadata") or {}).get("url") if (h.get("chunk_metadata") or {}) else "?") for h in hybrid_hits]
     chunk_metadata = [h.get("chunk_metadata") or {} for h in hybrid_hits]
@@ -378,6 +545,13 @@ def api_agentic_chat(req: ChatAgenticReq, _: str = Depends(get_current_user)):
             **query_args
         )
         answer = llm_resp.get("answer", "")
+    elif req.llm_source.lower() == "bedrock":
+        pipeline = BedrockPipeline(region=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"))
+        llm_resp = pipeline.query(
+            question=req.message,
+            **query_args
+        )
+        answer = llm_resp.get("answer", "")
     else:
         raise HTTPException(400, f"Unknown llm_source {req.llm_source}")
 
@@ -407,9 +581,9 @@ def api_conversational_chat(req: ChatConversationReq, _: str = Depends(get_curre
     custom_prompt = system_prompt or LEGAL_ASSISTANT_PROMPT
 
     # New: Per-turn hybrid search for Top K context
-    from db.store import search_hybrid
+    # using storage adapter for hybrid search
     top_k = getattr(req, "top_k", 10)
-    hybrid_hits = search_hybrid(req.message, top_k=top_k, alpha=0.5)
+    hybrid_hits = get_adapter().search_hybrid(req.message, top_k=top_k, alpha=0.5)
     context_chunks = [h.get("text", "") for h in hybrid_hits]
     sources = [h.get("citation") or ((h.get("chunk_metadata") or {}).get("url") if (h.get("chunk_metadata") or {}) else "?") for h in hybrid_hits]
     chunk_metadata = [h.get("chunk_metadata") or {} for h in hybrid_hits]
@@ -459,6 +633,24 @@ def api_conversational_chat(req: ChatConversationReq, _: str = Depends(get_curre
         out["sources"] = sources
         out["chunk_metadata"] = chunk_metadata
         out["context_chunks"] = context_chunks
+    elif req.llm_source.lower() == "bedrock":
+        pipeline = BedrockPipeline(region=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"))
+        llm_resp = pipeline.query(
+            question=req.message,
+            chat_history=history,
+            context_chunks=context_chunks,
+            sources=sources,
+            chunk_metadata=chunk_metadata,
+            custom_prompt=custom_prompt,
+            temperature=req.temperature,
+            top_p=req.top_p,
+            max_tokens=req.max_tokens,
+            repeat_penalty=req.repeat_penalty
+        )
+        out["answer"] = llm_resp.get("answer", "")
+        out["sources"] = sources
+        out["chunk_metadata"] = chunk_metadata
+        out["context_chunks"] = context_chunks
     else:
         raise HTTPException(400, f"Unknown llm_source {req.llm_source}")
 
@@ -472,7 +664,7 @@ class ChatMsg(BaseModel):
 @app.post("/chat/session", tags=["chat"])
 def api_chat_session(msg: ChatMsg, _: str = Depends(get_current_user)):
     rag = RAGPipeline(model=msg.model or "llama3")
-    results = search_bm25(msg.prompt, top_k=5)
+    results = get_adapter().search_bm25(msg.prompt, top_k=5)
     context_chunks = [r["text"] for r in results]
     sources = [r["source"] for r in results]
     chunk_metadata = [r.get("chunk_metadata") for r in results]
@@ -520,7 +712,7 @@ def api_search_fts(req: FtsSearchReq, _: str = Depends(get_current_user)):
     Full text search using stemming and phrase logic over document_fts (in documents),
     chunk_metadata (in embeddings), or both, as chosen by 'mode' param.
     """
-    return search_fts(req.query, req.top_k, req.mode)
+    return get_adapter().search_fts(req.query, req.top_k, req.mode)
 
 # --- Utility/model endpoints ---
 @app.get("/models/oci_genai", tags=["models"])

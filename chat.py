@@ -1,5 +1,5 @@
 """
-Legal Assistant Chat (SaaS-style) for auslegalsearchv2
+Legal Assistant Chat (SaaS-style) for cogneov2
 - This is a completely separate, dedicated chat interface with memory,
   hybrid legal search, source popups, custom prompt, citation-enforced LLM answers,
   and user experience for lawyers/law firms.

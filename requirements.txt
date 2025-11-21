@@ -24,3 +24,7 @@ oracledb
 einops
 langchain-text-splitters
 tiktoken
+opensearch-py
+boto3
+PyJWT
+starlette-exporter

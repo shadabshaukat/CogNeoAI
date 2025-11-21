@@ -1,5 +1,5 @@
 -- =====================================================================
--- AUSLegalSearch v3 — Optimized SQL Templates (Documented + Snippets)
+-- CogNeo v3 — Optimized SQL Templates (Documented + Snippets)
 --
 -- Purpose:
 --   Curated query templates for high-performance legal search, aligned

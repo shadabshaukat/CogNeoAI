@@ -1,4 +1,4 @@
-# AUSLegalSearch v3 — Beta Data Load Guide
+# CogNeo v3 — Beta Data Load Guide
 
 End-to-end guide to run the beta ingestion pipeline: discover files, parse, chunk (semantic or dashed-header), embed on NVIDIA GPUs, write to Postgres/pgvector, and maintain FTS. Includes multi-GPU orchestration, resume, performance tuning, and verification.
 
@@ -51,12 +51,12 @@ Key modules:
     - FTS: documents.document_fts, trigger function, GIN index
     - Vector indexes for similarity search
 - Database env vars (example):
-  - export AUSLEGALSEARCH_DB_HOST=localhost
-  - export AUSLEGALSEARCH_DB_PORT=5432
-  - export AUSLEGALSEARCH_DB_USER=postgres
-  - export AUSLEGALSEARCH_DB_PASSWORD='YourPasswordHere'
-  - export AUSLEGALSEARCH_DB_NAME=postgres
-  - Or set a full URL via AUSLEGALSEARCH_DB_URL (takes precedence).
+  - export COGNEO_DB_HOST=localhost
+  - export COGNEO_DB_PORT=5432
+  - export COGNEO_DB_USER=postgres
+  - export COGNEO_DB_PASSWORD='YourPasswordHere'
+  - export COGNEO_DB_NAME=postgres
+  - Or set a full URL via COGNEO_DB_URL (takes precedence).
 - NVIDIA GPUs and CUDA visible for embedding acceleration:
   - nvidia-smi available
   - Optional: set HF_HOME to a fast SSD for model caching.
@@ -73,13 +73,13 @@ set -a
 source .env
 set +a
 # verify:
-env | grep AUSLEGALSEARCH_DB_
-python3 -c 'import os;print(os.environ.get("AUSLEGALSEARCH_DB_PASSWORD"))'
+env | grep COGNEO_DB_
+python3 -c 'import os;print(os.environ.get("COGNEO_DB_PASSWORD"))'
 ```
 
 Notes:
 - Because the code auto-loads .env, simply running python from the repo root or CWD that contains .env is sufficient. Exporting variables is still fine and overrides .env.
-- AUSLEGALSEARCH_DB_URL can be used as a single DSN string (SQLAlchemy URL). If your password has special characters, percent-encode them.
+- COGNEO_DB_URL can be used as a single DSN string (SQLAlchemy URL). If your password has special characters, percent-encode them.
 
 
 ## 3) Supported files and layout
@@ -274,7 +274,7 @@ flowchart TD
     F -->|chunks > 0| G[Proceed with chunks]
     F -->|no chunks| H[chunk_document_semantic(text, base_meta, cfg)]
     H -->|chunks > 0| G
-    H -->|no chunks| I{AUSLEGALSEARCH_USE_RCTS_GENERIC == 1?}
+    H -->|no chunks| I{COGNEO_USE_RCTS_GENERIC == 1?}
     I -->|yes| J[chunk_generic_rcts(text, base_meta, cfg)]
     I -->|no| K[No chunks]
     J -->|chunks > 0| G
@@ -296,7 +296,7 @@ flowchart TD
 - Try 2: chunk_document_semantic
   - Heading-aware blocks (Roman numerals, 1.2.3., UPPERCASE, "Section N"), then sentence merging to target_tokens with overlap. Ensures max_tokens.
 - Optional Try 3: chunk_generic_rcts
-  - Enabled when AUSLEGALSEARCH_USE_RCTS_GENERIC=1 and LangChain splitters are available.
+  - Enabled when COGNEO_USE_RCTS_GENERIC=1 and LangChain splitters are available.
   - Uses RecursiveCharacterTextSplitter (token-aware via tiktoken if present; else character-approx).
   - If a first dashed header exists, its key:value pairs are added to metadata for all chunks. strategy="rcts-generic".
 - Safety: On chunk timeout/error, worker uses a character-window fallback to guarantee coverage.
@@ -319,7 +319,7 @@ flowchart TD
 [Chunk selector]
     |-- Try 1: chunk_legislation_dashed_semantic(text, base_meta, cfg)
     |-- Else Try 2: chunk_document_semantic(text, base_meta, cfg)
-    |-- Else Try 3 (optional): chunk_generic_rcts(text, base_meta, cfg) if AUSLEGALSEARCH_USE_RCTS_GENERIC=1
+    |-- Else Try 3 (optional): chunk_generic_rcts(text, base_meta, cfg) if COGNEO_USE_RCTS_GENERIC=1
     |-- Else: 0 chunks
     |
     v
@@ -356,19 +356,19 @@ DB & Embed:
 
 New/updated environment variables (production hardening)
 - Database connector (db/connector.py):
-  - AUSLEGALSEARCH_DB_POOL_SIZE (default 10)
-  - AUSLEGALSEARCH_DB_MAX_OVERFLOW (default 20)
-  - AUSLEGALSEARCH_DB_POOL_RECYCLE (default 1800 seconds)
-  - AUSLEGALSEARCH_DB_POOL_TIMEOUT (default 30 seconds)
-  - AUSLEGALSEARCH_DB_STATEMENT_TIMEOUT_MS (optional server-side timeout, e.g., 60000)
+  - COGNEO_DB_POOL_SIZE (default 10)
+  - COGNEO_DB_MAX_OVERFLOW (default 20)
+  - COGNEO_DB_POOL_RECYCLE (default 1800 seconds)
+  - COGNEO_DB_POOL_TIMEOUT (default 30 seconds)
+  - COGNEO_DB_STATEMENT_TIMEOUT_MS (optional server-side timeout, e.g., 60000)
 - Embedding / vector:
-  - AUSLEGALSEARCH_EMBED_DIM (default 768; must match your embedding model dimension)
+  - COGNEO_EMBED_DIM (default 768; must match your embedding model dimension)
 - Worker timeouts:
-  - AUSLEGALSEARCH_TIMEOUT_INSERT (default 120 seconds, per-file DB insert deadline)
+  - COGNEO_TIMEOUT_INSERT (default 120 seconds, per-file DB insert deadline)
 - Logging/optional features (unchanged, clarified):
-  - AUSLEGALSEARCH_LOG_METRICS=1 includes per-file metrics and per-stage timings
-  - AUSLEGALSEARCH_USE_RCTS_GENERIC=1 enables RCTS fallback for generic text
-  - AUSLEGALSEARCH_FALLBACK_CHUNK_ON_TIMEOUT=1 keeps character-window fallback enabled
+  - COGNEO_LOG_METRICS=1 includes per-file metrics and per-stage timings
+  - COGNEO_USE_RCTS_GENERIC=1 enables RCTS fallback for generic text
+  - COGNEO_FALLBACK_CHUNK_ON_TIMEOUT=1 keeps character-window fallback enabled
 
 Resumable ingestion and “remaining files” method
 - If a single GPU child stalls:
@@ -378,7 +378,7 @@ Resumable ingestion and “remaining files” method
   ```
   session=beta-cases-full-20251014-122557
   child=${session}-gpu3
-  proj=/home/ubuntu/auslegalsearchv3/auslegalsearchv3
+  proj=/home/ubuntu/cogneo/cogneo
   logs="$proj/logs"
   part=".beta-gpu-partition-${child}.txt"
 
@@ -394,10 +394,10 @@ Resumable ingestion and “remaining files” method
   kill -TERM <PID_of_${child}>; sleep 10
   pgrep -fa "ingest.beta_worker" | grep "${child}" && kill -KILL <PID_of_${child}>
 
-  export AUSLEGALSEARCH_TIMEOUT_PARSE=30
-  export AUSLEGALSEARCH_TIMEOUT_CHUNK=60
-  export AUSLEGALSEARCH_TIMEOUT_EMBED_BATCH=180
-  export AUSLEGALSEARCH_TIMEOUT_INSERT=120
+  export COGNEO_TIMEOUT_PARSE=30
+  export COGNEO_TIMEOUT_CHUNK=60
+  export COGNEO_TIMEOUT_EMBED_BATCH=180
+  export COGNEO_TIMEOUT_INSERT=120
 
   CUDA_VISIBLE_DEVICES=3 \
   python3 -m ingest.beta_worker ${child}-r1 \
@@ -428,12 +428,12 @@ Worker flags (ingest/beta_worker.py):
 - --log_dir
 
 Key environment variables (full list in Appendix):
-- AUSLEGALSEARCH_USE_RCTS_GENERIC=1 (optional RCTS fallback on)
-- AUSLEGALSEARCH_LOG_METRICS=0/1 (per-file metrics in child success logs; default 1)
-- AUSLEGALSEARCH_FALLBACK_CHUNK_ON_TIMEOUT=0/1 (default 1)
-- AUSLEGALSEARCH_FALLBACK_CHARS_PER_CHUNK / AUSLEGALSEARCH_FALLBACK_OVERLAP_CHARS
-- AUSLEGALSEARCH_TIMEOUT_PARSE / AUSLEGALSEARCH_TIMEOUT_CHUNK / AUSLEGALSEARCH_TIMEOUT_EMBED_BATCH
-- AUSLEGALSEARCH_EMBED_BATCH (default 64)
+- COGNEO_USE_RCTS_GENERIC=1 (optional RCTS fallback on)
+- COGNEO_LOG_METRICS=0/1 (per-file metrics in child success logs; default 1)
+- COGNEO_FALLBACK_CHUNK_ON_TIMEOUT=0/1 (default 1)
+- COGNEO_FALLBACK_CHARS_PER_CHUNK / COGNEO_FALLBACK_OVERLAP_CHARS
+- COGNEO_TIMEOUT_PARSE / COGNEO_TIMEOUT_CHUNK / COGNEO_TIMEOUT_EMBED_BATCH
+- COGNEO_EMBED_BATCH (default 64)
 
 
 ## 10) Logs and monitoring (with start/stop time and per-file metrics)
@@ -441,7 +441,7 @@ Key environment variables (full list in Appendix):
 Per-worker child logs (incremental appends):
 - {child_session}.success.log
 - {child_session}.error.log
-- {child_session}.errors.ndjson (structured; only if AUSLEGALSEARCH_ERROR_DETAILS=1)
+- {child_session}.errors.ndjson (structured; only if COGNEO_ERROR_DETAILS=1)
 
 Orchestrator aggregated logs (when wait enabled):
 - {base_session}.success.log
@@ -465,12 +465,12 @@ Example header in {base_session}.success.log:
 ```
 
 Per-file metrics in child success logs (light overhead):
-- Controlled by AUSLEGALSEARCH_LOG_METRICS (default 1)
+- Controlled by COGNEO_LOG_METRICS (default 1)
 - TSV-style line per success:
   ```
   /abs/path/file.html    chunks=12  text_len=84219  strategy=dashed-semantic  target_tokens=1500  overlap_tokens=192  max_tokens=1920  type=legislation  section_count=37  tokens_est_total=14052  tokens_est_mean=1171
   ```
-- If AUSLEGALSEARCH_LOG_METRICS=0, only the file path is logged (legacy format).
+- If COGNEO_LOG_METRICS=0, only the file path is logged (legacy format).
 - Per-stage timing fields: parse_ms, chunk_ms, embed_ms, insert_ms
 - Strategy could be: dashed-semantic | semantic | rcts-generic | fallback-naive | no-chunks
 
@@ -506,7 +506,7 @@ LIMIT 20;
 - Parallelism:
   - Orchestrator launches one worker per detected GPU (or per --gpus). Each worker performs parsing/semantic chunking on CPU and embedding on the assigned GPU.
 - Embedding batch size:
-  - AUSLEGALSEARCH_EMBED_BATCH: increase for throughput (watch memory).
+  - COGNEO_EMBED_BATCH: increase for throughput (watch memory).
     - 16 GB GPUs: 64–128
     - 24–40 GB GPUs: 128–256
 - Chunk token sizes:
@@ -515,9 +515,9 @@ LIMIT 20;
 - Model caching:
   - Set HF_HOME to a fast SSD; warm the model before large runs.
 - Chunking timeouts:
-  - Increase AUSLEGALSEARCH_TIMEOUT_CHUNK moderately for very long Acts if you see timeouts.
+  - Increase COGNEO_TIMEOUT_CHUNK moderately for very long Acts if you see timeouts.
 - Logging overhead:
-  - Per-file metrics compute O(chunks) sums/means and a single file append. Embedding dominates runtime, so the impact is negligible. Set AUSLEGALSEARCH_LOG_METRICS=0 to disable entirely if desired.
+  - Per-file metrics compute O(chunks) sums/means and a single file append. Embedding dominates runtime, so the impact is negligible. Set COGNEO_LOG_METRICS=0 to disable entirely if desired.
 
 
 ## 12) Troubleshooting
@@ -527,13 +527,13 @@ LIMIT 20;
 - Database errors (vector/FTS):
   - Ensure db/store.py create_all_tables() ran at least once with privileges to create extensions.
 - OOM during embedding:
-  - Reduce AUSLEGALSEARCH_EMBED_BATCH and/or chunk sizes.
+  - Reduce COGNEO_EMBED_BATCH and/or chunk sizes.
 - Slow downloads / repeated model fetches:
   - Set HF_HOME to a persistent cache directory.
 - Resume didn’t skip:
   - Reuse the SAME base session and SAME GPU count so child session names match.
 - Too many fallback chunks:
-  - Increase AUSLEGALSEARCH_TIMEOUT_CHUNK for large/complex documents.
+  - Increase COGNEO_TIMEOUT_CHUNK for large/complex documents.
 - Verify dashed-header metadata:
   - Query embeddings where chunk_metadata ? 'title' and inspect regulation/chunk_id fields.
 
@@ -541,38 +541,38 @@ LIMIT 20;
 ## 13) Appendix: Environment variables (quick ref)
 
 - Database:
-  - AUSLEGALSEARCH_DB_HOST / AUSLEGALSEARCH_DB_PORT / AUSLEGALSEARCH_DB_USER / AUSLEGALSEARCH_DB_PASSWORD / AUSLEGALSEARCH_DB_NAME
-  - AUSLEGALSEARCH_DB_URL (optional override; full SQLAlchemy URL)
+  - COGNEO_DB_HOST / COGNEO_DB_PORT / COGNEO_DB_USER / COGNEO_DB_PASSWORD / COGNEO_DB_NAME
+  - COGNEO_DB_URL (optional override; full SQLAlchemy URL)
 - Chunking:
-  - AUSLEGALSEARCH_USE_RCTS_GENERIC=0/1 (default 0)
-  - AUSLEGALSEARCH_FALLBACK_CHUNK_ON_TIMEOUT=0/1 (default 1)
-  - AUSLEGALSEARCH_FALLBACK_CHARS_PER_CHUNK (default 4000), AUSLEGALSEARCH_FALLBACK_OVERLAP_CHARS (default 200)
-  - AUSLEGALSEARCH_TIMEOUT_PARSE (default 60)
-  - AUSLEGALSEARCH_TIMEOUT_CHUNK (default 90)
-  - AUSLEGALSEARCH_TIMEOUT_EMBED_BATCH (default 180)
+  - COGNEO_USE_RCTS_GENERIC=0/1 (default 0)
+  - COGNEO_FALLBACK_CHUNK_ON_TIMEOUT=0/1 (default 1)
+  - COGNEO_FALLBACK_CHARS_PER_CHUNK (default 4000), COGNEO_FALLBACK_OVERLAP_CHARS (default 200)
+  - COGNEO_TIMEOUT_PARSE (default 60)
+  - COGNEO_TIMEOUT_CHUNK (default 90)
+  - COGNEO_TIMEOUT_EMBED_BATCH (default 180)
 - Logging & diagnostics:
-  - AUSLEGALSEARCH_LOG_METRICS=0/1 (default 1)
-  - AUSLEGALSEARCH_ERROR_DETAILS=0/1 (default 1)
-  - AUSLEGALSEARCH_ERROR_TRACE=0/1 (default 0)
-  - AUSLEGALSEARCH_DEBUG_COUNTS=0/1 (default 0)
+  - COGNEO_LOG_METRICS=0/1 (default 1)
+  - COGNEO_ERROR_DETAILS=0/1 (default 1)
+  - COGNEO_ERROR_TRACE=0/1 (default 0)
+  - COGNEO_DEBUG_COUNTS=0/1 (default 0)
 - Embedding:
-  - AUSLEGALSEARCH_EMBED_BATCH (default 64)
+  - COGNEO_EMBED_BATCH (default 64)
   - HF_HOME, TOKENIZER_PARALLELISM (optional)
 
 
 ## 14) Example end-to-end command
 
 ```
-export AUSLEGALSEARCH_DB_HOST=localhost
-export AUSLEGALSEARCH_DB_PORT=5432
-export AUSLEGALSEARCH_DB_USER=postgres
-export AUSLEGALSEARCH_DB_PASSWORD='YourPasswordHere'
-export AUSLEGALSEARCH_DB_NAME=postgres
-export AUSLEGALSEARCH_EMBED_BATCH=128
-export AUSLEGALSEARCH_LOG_METRICS=1
+export COGNEO_DB_HOST=localhost
+export COGNEO_DB_PORT=5432
+export COGNEO_DB_USER=postgres
+export COGNEO_DB_PASSWORD='YourPasswordHere'
+export COGNEO_DB_NAME=postgres
+export COGNEO_EMBED_BATCH=128
+export COGNEO_LOG_METRICS=1
 export HF_HOME=/fast/ssd/hf_cache
 # Optional: enable RCTS fallback for irregular files
-# export AUSLEGALSEARCH_USE_RCTS_GENERIC=1
+# export COGNEO_USE_RCTS_GENERIC=1
 
 python3 -m ingest.beta_orchestrator \
   --root "/home/ubuntu/Data_for_Beta_Launch" \
@@ -582,12 +582,12 @@ python3 -m ingest.beta_orchestrator \
   --target_tokens 1500 \
   --overlap_tokens 192 \
   --max_tokens 1920 \
-  --log_dir "/home/ubuntu/auslegalsearchv3/auslegalsearchv3/logs"
+  --log_dir "/home/ubuntu/cogneo/cogneo/logs"
 ```
 
 This guide reflects the current beta workflow and code paths:
 - Orchestrator: ingest/beta_orchestrator.py (aggregated logs include started_at/ended_at/duration_sec headers)
-- Worker: ingest/beta_worker.py (per-file metrics in child success logs; toggle via AUSLEGALSEARCH_LOG_METRICS)
+- Worker: ingest/beta_worker.py (per-file metrics in child success logs; toggle via COGNEO_LOG_METRICS)
 - Chunkers (beta): ingest/semantic_chunker.py (dashed-header and generic semantic; optional RCTS fallback)
 - Embedding: embedding/embedder.py
 - DB/FTS: db/store.py, db/connector.py

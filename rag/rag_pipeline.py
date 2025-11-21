@@ -1,5 +1,5 @@
 """
-RAG pipeline for auslegalsearchv2/v3.
+RAG pipeline for cogneov2/v3.
 - Retrieves relevant documents/chunks from the vector store.
 - Sends context, user question, and options to Ollama Llama3/Llama4 via API.
 - Returns model output (QA answer/summary) and relevant document sources.
@@ -49,7 +49,7 @@ class RAGPipeline:
         if custom_prompt:
             sys_prompt = custom_prompt.strip()
         else:
-            sys_prompt = "You are a legal assistant. Answer only from the provided context. Cite sources. Be concise."
+            sys_prompt = "You are an expert Australian legal research and compliance AI assistant. Answer strictly from the provided context and always cite the source section/citation. Be concise and never invent legal advice."
 
         if chunk_metadata is None:
             blocks = [self._generate_context_block(text, None) for text in context_chunks]
@@ -80,6 +80,58 @@ class RAGPipeline:
             return resp.json().get("response", "")
         else:
             return f"Error querying Llama4: {resp.status_code} {resp.text}"
+
+    def stream_llama4_rag(
+        self, query: str, context_chunks, chunk_metadata=None, custom_prompt=None,
+        temperature=0.2, top_p=0.95, max_tokens=1024, repeat_penalty=1.1
+    ):
+        """
+        Stream partial tokens from Ollama generate API.
+        Yields strings incrementally as they arrive.
+        """
+        if custom_prompt:
+            sys_prompt = custom_prompt.strip()
+        else:
+            sys_prompt = "You are an expert Australian legal research and compliance AI assistant. Answer strictly from the provided context and always cite the source section/citation. Be concise and never invent legal advice."
+
+        if chunk_metadata is None:
+            blocks = [self._generate_context_block(text, None) for text in (context_chunks or [])]
+        else:
+            blocks = [self._generate_context_block(text, meta) for text, meta in zip(context_chunks or [], chunk_metadata or [])]
+        prompt = (
+            sys_prompt + "\n\n"
+            "Based on the following legal documents/chunks, answer the question or summarize as requested.\n"
+            "CONTEXT:\n"
+            + "\n\n---\n\n".join(blocks) +
+            f"\n\nQUESTION: {query}\nANSWER:"
+        )
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {
+                "temperature": temperature,
+                "top_p": top_p,
+                "num_predict": max_tokens,
+                "repeat_penalty": repeat_penalty,
+            },
+        }
+        with requests.post(f"{self.ollama_url}/api/generate", json=payload, stream=True, timeout=300) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                try:
+                    import json as _json
+                    obj = _json.loads(line)
+                    chunk = obj.get("response", "")
+                    if chunk:
+                        yield chunk
+                    if obj.get("done"):
+                        break
+                except Exception:
+                    # In case of non-JSON lines, just yield raw
+                    yield line
 
     def query(
         self, question: str, top_k: int = 5, context_chunks=None, sources=None, chunk_metadata=None, custom_prompt=None,

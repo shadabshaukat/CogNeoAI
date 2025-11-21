@@ -1,4 +1,4 @@
-# AUSLegalSearch v3 — Delete by URL Tool
+# CogNeo v3 — Delete by URL Tool
 
 This utility locates and deletes all records for one or more URL values from the ingestion tables:
 - Deletes rows in `embeddings` where `chunk_metadata->>'url' = :url`
@@ -20,17 +20,17 @@ Tool path:
     ```bash
     set -a; source .env; set +a
     ```
-  - Alternatively provide a single DSN in `AUSLEGALSEARCH_DB_URL`
+  - Alternatively provide a single DSN in `COGNEO_DB_URL`
 - The tool inherits DB connection from `db/connector.py`, which has a built-in `.env` loader
 
 
 ## Environment variables
 
 Either a single DSN:
-- `AUSLEGALSEARCH_DB_URL='postgresql+psycopg2://user:pass@host:5432/dbname'`
+- `COGNEO_DB_URL='postgresql+psycopg2://user:pass@host:5432/dbname'`
 
 Or individual variables:
-- `AUSLEGALSEARCH_DB_HOST`, `AUSLEGALSEARCH_DB_PORT`, `AUSLEGALSEARCH_DB_USER`, `AUSLEGALSEARCH_DB_PASSWORD`, `AUSLEGALSEARCH_DB_NAME`
+- `COGNEO_DB_HOST`, `COGNEO_DB_PORT`, `COGNEO_DB_USER`, `COGNEO_DB_PASSWORD`, `COGNEO_DB_NAME`
 
 Note: The project’s `db/connector.py` reads `.env` when present (exported env vars take precedence). Running from the repo root is recommended.
 
@@ -83,7 +83,7 @@ python -m tools.delete_url_records \
   --show-sql
 ```
 
-- Bulk URLs (prints literal SQL for the first N URLs; cap controlled by AUSLEGALSEARCH_SHOWSQL_MAXURLS, default 20):
+- Bulk URLs (prints literal SQL for the first N URLs; cap controlled by COGNEO_SHOWSQL_MAXURLS, default 20):
 ```bash
 python -m tools.delete_url_records \
   --url-file "/abs/path/urls.txt" \

@@ -9,12 +9,12 @@ brew install gh
 gh auth login
 
 # --- INITIALIZE GIT (if not already initialized) ---
-cd /Users/shadab/Desktop/auslegalsearchv2
+cd /Users/shadab/Desktop/cogneov2
 git init
 
 # --- ADD REMOTE OR SET/CHECK REMOTE ---
 git remote remove origin 2>/dev/null || true
-git remote add origin https://github.com/shadabshaukat/auslegalsearchv2.git
+git remote add origin https://github.com/shadabshaukat/cogneov2.git
 
 # --- COMMIT AND PUSH ENTIRE FOLDER ---
 git add .

@@ -1,2 +1,2 @@
-# Database package for auslegalsearchv2.
+# Database package for cogneov2.
 # Handles all Postgres (pgvector) connections and ORM logic.

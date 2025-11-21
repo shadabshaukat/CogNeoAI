@@ -1,6 +1,6 @@
-# AUSLegalSearch v3 — Tools: SQL Latency Benchmark
+# CogNeo v3 — Tools: SQL Latency Benchmark
 
-This directory contains the end-to-end SQL latency benchmarking tool for the AUSLegalSearch v3 stack. It measures latency and prints top results for:
+This directory contains the end-to-end SQL latency benchmarking tool for the CogNeo v3 stack. It measures latency and prints top results for:
 - Vector similarity searches using pgvector with optional JSON metadata filters
 - Full Text Search (FTS) on documents.content via documents.document_fts
 - Metadata-only filtering on JSONB
@@ -32,10 +32,10 @@ Related documentation:
   - CREATE EXTENSION IF NOT EXISTS vector;
   - Other recommended: pg_trgm, uuid-ossp, fuzzystrmatch
 - Database connection configured via environment
-  - Either AUSLEGALSEARCH_DB_URL or all AUSLEGALSEARCH_DB_HOST/PORT/USER/PASSWORD/NAME
+  - Either COGNEO_DB_URL or all COGNEO_DB_HOST/PORT/USER/PASSWORD/NAME
   - The repo auto-loads .env at runtime if present (exported env vars take precedence)
 - Embedding model available for query embedding (defaults to nomic-ai/nomic-embed-text-v1.5, dim=768)
-  - Ensure AUSLEGALSEARCH_EMBED_DIM in DB schema matches your embedding model dimension (default 768)
+  - Ensure COGNEO_EMBED_DIM in DB schema matches your embedding model dimension (default 768)
 
 
 ## Environment and Config
@@ -43,16 +43,16 @@ Related documentation:
 The benchmark uses the shared db.connector engine and the embedding/embedder interface, so it follows the same configuration model as the rest of the app.
 
 - Database:
-  - AUSLEGALSEARCH_DB_URL or:
-    - AUSLEGALSEARCH_DB_HOST, AUSLEGALSEARCH_DB_PORT, AUSLEGALSEARCH_DB_USER, AUSLEGALSEARCH_DB_PASSWORD, AUSLEGALSEARCH_DB_NAME
+  - COGNEO_DB_URL or:
+    - COGNEO_DB_HOST, COGNEO_DB_PORT, COGNEO_DB_USER, COGNEO_DB_PASSWORD, COGNEO_DB_NAME
   - Optional engine tuning:
-    - AUSLEGALSEARCH_DB_POOL_SIZE, AUSLEGALSEARCH_DB_MAX_OVERFLOW, AUSLEGALSEARCH_DB_POOL_RECYCLE, AUSLEGALSEARCH_DB_POOL_TIMEOUT
-    - AUSLEGALSEARCH_DB_STATEMENT_TIMEOUT_MS
+    - COGNEO_DB_POOL_SIZE, COGNEO_DB_MAX_OVERFLOW, COGNEO_DB_POOL_RECYCLE, COGNEO_DB_POOL_TIMEOUT
+    - COGNEO_DB_STATEMENT_TIMEOUT_MS
 
 - Embedding model:
-  - AUSLEGALSEARCH_EMBED_MODEL (default nomic-ai/nomic-embed-text-v1.5)
-  - AUSLEGALSEARCH_EMBED_DIM must match model dimension (e.g., 768)
-  - AUSLEGALSEARCH_EMBED_REV to pin revisions; AUSLEGALSEARCH_HF_LOCAL_ONLY=1 for offline cache
+  - COGNEO_EMBED_MODEL (default nomic-ai/nomic-embed-text-v1.5)
+  - COGNEO_EMBED_DIM must match model dimension (e.g., 768)
+  - COGNEO_EMBED_REV to pin revisions; COGNEO_HF_LOCAL_ONLY=1 for offline cache
   - HF_HOME for model cache location
 
 - Session tuning in the script:
@@ -254,7 +254,7 @@ See schema-post-load/README.md and schema-post-load/optimized_sql.sql for:
   - Confirm db/store.create_all_tables() ran at least once
 
 - Embedding dimension mismatch
-  - AUSLEGALSEARCH_EMBED_DIM must match the embedding model’s dimension (e.g., 768 for nomic v1.5)
+  - COGNEO_EMBED_DIM must match the embedding model’s dimension (e.g., 768 for nomic v1.5)
 
 - Slow model downloads / repeated fetching
   - Set HF_HOME to a persistent, fast cache directory
@@ -269,7 +269,7 @@ See schema-post-load/README.md and schema-post-load/optimized_sql.sql for:
 
 - No results for FTS
   - Confirm the documents.document_fts column exists and the trigger is in place (db/store.create_all_tables() sets it up)
-  - If document_fts is NULL for existing rows, run the backfill (disabled if AUSLEGALSEARCH_SCHEMA_LIGHT_INIT=1)
+  - If document_fts is NULL for existing rows, run the backfill (disabled if COGNEO_SCHEMA_LIGHT_INIT=1)
 
 
 ## Examples

@@ -1,4 +1,4 @@
-# AUSLegalSearch v3 — Embedding Subsystem
+# CogNeo v3 — Embedding Subsystem
 
 Vector embedding interface and runtime for the ingestion pipeline, search, and benchmarking tools. Provides a single, ergonomic API around Sentence-Transformers models with a robust HuggingFace fallback.
 
@@ -10,7 +10,7 @@ Primary module
 
 - Model resolution order
   1) Explicit `Embedder(model_name=...)` argument
-  2) Environment variable `AUSLEGALSEARCH_EMBED_MODEL`
+  2) Environment variable `COGNEO_EMBED_MODEL`
   3) Default: `nomic-ai/nomic-embed-text-v1.5` (768D)
 
 - Sentence-Transformers preferred, HF fallback:
@@ -30,20 +30,20 @@ Primary module
 ## Environment variables
 
 - Selection and trust
-  - `AUSLEGALSEARCH_EMBED_MODEL` — Model repo or checkpoint name
-  - `AUSLEGALSEARCH_TRUST_REMOTE_CODE=1` — Pass `trust_remote_code=True` to allow custom model code
-  - `AUSLEGALSEARCH_EMBEDDER_FLAGS` — Freeform flags; if contains `trust_remote_code`, enables trust
+  - `COGNEO_EMBED_MODEL` — Model repo or checkpoint name
+  - `COGNEO_TRUST_REMOTE_CODE=1` — Pass `trust_remote_code=True` to allow custom model code
+  - `COGNEO_EMBEDDER_FLAGS` — Freeform flags; if contains `trust_remote_code`, enables trust
 
 - Revisions and offline caches
-  - `AUSLEGALSEARCH_EMBED_REV` — Specific revision/commit to load
-  - `AUSLEGALSEARCH_HF_LOCAL_ONLY=1` — Force `local_files_only=True` to use local cache only
+  - `COGNEO_EMBED_REV` — Specific revision/commit to load
+  - `COGNEO_HF_LOCAL_ONLY=1` — Force `local_files_only=True` to use local cache only
   - `HF_HOME` — Caching directory for HF/ST models (place on fast SSD)
 
 - Fallback maximum sequence length
-  - `AUSLEGALSEARCH_EMBED_MAXLEN` (default 512) — Max token length for HF fallback (AutoTokenizer truncation)
+  - `COGNEO_EMBED_MAXLEN` (default 512) — Max token length for HF fallback (AutoTokenizer truncation)
 
 - Critical database dimension match
-  - `AUSLEGALSEARCH_EMBED_DIM` — Dimension for DB schema Vector column (default 768)
+  - `COGNEO_EMBED_DIM` — Dimension for DB schema Vector column (default 768)
   - Must match the actual model’s embedding dimension; otherwise inserts and/or queries will fail
 
 
@@ -53,7 +53,7 @@ Basic
 ```python
 from embedding.embedder import Embedder
 
-embedder = Embedder()  # uses AUSLEGALSEARCH_EMBED_MODEL or default
+embedder = Embedder()  # uses COGNEO_EMBED_MODEL or default
 vecs = embedder.embed(["example legal text 1", "example legal text 2"])
 print(vecs.shape)  # (2, embedder.dimension)
 ```
@@ -72,7 +72,7 @@ vecs = embedder.embed(["..."])  # .dimension inferred from model.hidden_size (e.
 
 Environment-based
 ```bash
-export AUSLEGALSEARCH_EMBED_MODEL="nomic-ai/nomic-embed-text-v1.5"
+export COGNEO_EMBED_MODEL="nomic-ai/nomic-embed-text-v1.5"
 python -c "from embedding.embedder import Embedder; e=Embedder(); print(e.dimension)"
 ```
 
@@ -81,7 +81,7 @@ python -c "from embedding.embedder import Embedder; e=Embedder(); print(e.dimens
 
 - Ingestion workers (`ingest/beta_worker.py`)
   - Embedder is initialized once per worker process (after CPU process pool is created)
-  - Batching controlled by `AUSLEGALSEARCH_EMBED_BATCH` (default 64)
+  - Batching controlled by `COGNEO_EMBED_BATCH` (default 64)
   - Adaptive backoff halves batch size on OOM until it fits
 
 - Search (`db/store.py`)
@@ -99,7 +99,7 @@ python -c "from embedding.embedder import Embedder; e=Embedder(); print(e.dimens
 - Model cache
   - Set `HF_HOME` to a fast SSD and pre-warm models to avoid cold-start latency
 - Text length
-  - Default HF fallback truncates at 512 tokens; adjust `AUSLEGALSEARCH_EMBED_MAXLEN` if needed
+  - Default HF fallback truncates at 512 tokens; adjust `COGNEO_EMBED_MAXLEN` if needed
 - Normalization
   - Embeddings are returned unnormalized by default; pgvector cosine distance works with raw vectors. If you need strict unit-norm, add `_l2_normalize` (already implemented and commented) where appropriate
 
@@ -107,12 +107,12 @@ python -c "from embedding.embedder import Embedder; e=Embedder(); print(e.dimens
 ## Troubleshooting
 
 - “Vector dimension mismatch” in DB operations
-  - Ensure `AUSLEGALSEARCH_EMBED_DIM` (used by DB schema) equals the actual model dimension reported by `Embedder().dimension`
+  - Ensure `COGNEO_EMBED_DIM` (used by DB schema) equals the actual model dimension reported by `Embedder().dimension`
   - Recreate DB vector column/index if you change model dimension
 
 - Model download failures / repeated downloads
   - Confirm network/firewall; set `HF_HOME` to a persistent cache
-  - Use `AUSLEGALSEARCH_HF_LOCAL_ONLY=1` to force local cache usage (requires prior download)
+  - Use `COGNEO_HF_LOCAL_ONLY=1` to force local cache usage (requires prior download)
 
 - Sentence-Transformers import errors
   - The fallback path uses HF `AutoModel` + mean pooling. Ensure `transformers` and `torch` are installed

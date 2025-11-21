@@ -1,5 +1,5 @@
 """
-Embedding interface for auslegalsearchv3.
+Embedding interface for cogneo.
 
 - Primary path: Sentence-Transformers models (default: nomic-ai/nomic-embed-text-v1.5, 768d)
 - Fallback path: Plain HuggingFace Transformer checkpoints (e.g., 'legal-bert-base-uncased') with pooling
@@ -7,7 +7,7 @@ Embedding interface for auslegalsearchv3.
 
 - Model selection order:
   1) Explicit 'model_name' argument (if provided)
-  2) Environment variable AUSLEGALSEARCH_EMBED_MODEL
+  2) Environment variable COGNEO_EMBED_MODEL
   3) DEFAULT_MODEL ('nomic-ai/nomic-embed-text-v1.5')
 
 - Provides embed(texts) method returning ndarray [batch, dim]
@@ -16,7 +16,7 @@ Embedding interface for auslegalsearchv3.
 Notes:
 - 'legal-bert-base-uncased' is a plain BERT checkpoint, not a sentence-transformers repo.
   This module supports it via a HF fallback with mean pooling over token embeddings.
-- Max sequence length for HF fallback can be controlled with AUSLEGALSEARCH_EMBED_MAXLEN (default 512).
+- Max sequence length for HF fallback can be controlled with COGNEO_EMBED_MAXLEN (default 512).
 """
 
 from typing import List
@@ -50,13 +50,13 @@ class Embedder:
         """
         Initialize embedder. Resolution order:
           1) model_name arg
-          2) AUSLEGALSEARCH_EMBED_MODEL env var
+          2) COGNEO_EMBED_MODEL env var
           3) DEFAULT_MODEL
 
         Attempts SentenceTransformer first; if load fails (or model isn't ST),
         falls back to HuggingFace AutoModel + mean pooling.
         """
-        resolved = model_name or os.environ.get("AUSLEGALSEARCH_EMBED_MODEL") or DEFAULT_MODEL
+        resolved = model_name or os.environ.get("COGNEO_EMBED_MODEL") or DEFAULT_MODEL
         self.model_name = resolved
         self.use_hf_fallback = False
         self._st_model = None
@@ -66,14 +66,14 @@ class Embedder:
 
         # Determine if we should pass trust_remote_code to ST loader
         trust_remote = False
-        flags = os.environ.get("AUSLEGALSEARCH_EMBEDDER_FLAGS", "")
+        flags = os.environ.get("COGNEO_EMBEDDER_FLAGS", "")
         if "trust_remote_code" in flags or ("nomic-ai" in resolved):
             trust_remote = True
-        if os.environ.get("AUSLEGALSEARCH_TRUST_REMOTE_CODE", "0") == "1":
+        if os.environ.get("COGNEO_TRUST_REMOTE_CODE", "0") == "1":
             trust_remote = True
         # Optional: pin revision and run offline from local cache
-        rev = os.environ.get("AUSLEGALSEARCH_EMBED_REV", None)
-        local_only = os.environ.get("AUSLEGALSEARCH_HF_LOCAL_ONLY", "0") == "1"
+        rev = os.environ.get("COGNEO_EMBED_REV", None)
+        local_only = os.environ.get("COGNEO_HF_LOCAL_ONLY", "0") == "1"
 
         # Try SentenceTransformer path first (if available)
         if SentenceTransformer is not None:
@@ -107,8 +107,8 @@ class Embedder:
         """
         _ensure_hf_imports()
         try:
-            rev = os.environ.get("AUSLEGALSEARCH_EMBED_REV", None)
-            local_only = os.environ.get("AUSLEGALSEARCH_HF_LOCAL_ONLY", "0") == "1"
+            rev = os.environ.get("COGNEO_EMBED_REV", None)
+            local_only = os.environ.get("COGNEO_HF_LOCAL_ONLY", "0") == "1"
             self._hf_tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote, revision=rev, local_files_only=local_only)
             self._hf_model = AutoModel.from_pretrained(model_name, trust_remote_code=trust_remote, revision=rev, local_files_only=local_only)
             # BERT-base hidden size is typically 768; grab from config
@@ -139,7 +139,7 @@ class Embedder:
 
         # HF fallback path
         _ensure_hf_imports()
-        max_len = int(os.environ.get("AUSLEGALSEARCH_EMBED_MAXLEN", "512"))
+        max_len = int(os.environ.get("COGNEO_EMBED_MAXLEN", "512"))
         # Tokenize as a batch
         with torch.no_grad():  # type: ignore
             toks = self._hf_tokenizer(
@@ -176,6 +176,6 @@ embedder = Embedder("maastrichtlawtech/bge-legal-en-v1.5")
 embedder = Embedder("nlpaueb/legal-bert-base-uncased")  # will use AutoModel + mean pooling (dim=768)
 
 # Env-based selection:
-# export AUSLEGALSEARCH_EMBED_MODEL="legal-bert-base-uncased"
+# export COGNEO_EMBED_MODEL="legal-bert-base-uncased"
 # python -c "from embedding.embedder import Embedder; print(Embedder().dimension)"
 """

@@ -1,10 +1,10 @@
-# Oracle Database 26ai Backend for AUSLegalSearch v3
+# Oracle Database 26ai Backend for CogNeo v3
 
-This document explains how to run AUSLegalSearch with Oracle Database 26ai as the storage backend, while preserving the existing Postgres-first core logic.
+This document explains how to run CogNeo with Oracle Database 26ai as the storage backend, while preserving the existing Postgres-first core logic.
 
 ## Overview
 
-- Backend switch is controlled by environment variable `AUSLEGALSEARCH_DB_BACKEND`.
+- Backend switch is controlled by environment variable `COGNEO_DB_BACKEND`.
 - Default remains Postgres. No behavior changes for existing setups.
 - Oracle backend uses `python-oracledb` via SQLAlchemy and stores:
   - Embedding vectors in the native Oracle `VECTOR(dim, FLOAT32, DENSE)` column type.
@@ -19,9 +19,9 @@ This document explains how to run AUSLegalSearch with Oracle Database 26ai as th
 ## Switching Backends
 
 - Postgres (default)
-  - `AUSLEGALSEARCH_DB_BACKEND=postgres`
+  - `COGNEO_DB_BACKEND=postgres`
 - Oracle
-  - `AUSLEGALSEARCH_DB_BACKEND=oracle`
+  - `COGNEO_DB_BACKEND=oracle`
 
 ## Environment Variables
 
@@ -38,27 +38,27 @@ This document explains how to run AUSLegalSearch with Oracle Database 26ai as th
 
 ### Pool/Timeout tuning (shared pattern with Postgres connector)
 
-- `AUSLEGALSEARCH_DB_POOL_SIZE=10`
-- `AUSLEGALSEARCH_DB_MAX_OVERFLOW=20`
-- `AUSLEGALSEARCH_DB_POOL_RECYCLE=1800`
-- `AUSLEGALSEARCH_DB_POOL_TIMEOUT=30`
+- `COGNEO_DB_POOL_SIZE=10`
+- `COGNEO_DB_MAX_OVERFLOW=20`
+- `COGNEO_DB_POOL_RECYCLE=1800`
+- `COGNEO_DB_POOL_TIMEOUT=30`
 
 ### Oracle AI Vector Search (optional index/bootstrap)
 
-- `AUSLEGALSEARCH_ORA_AUTO_VECTOR_INDEX=0|1`       # auto-create a vector index on `embeddings.vector` during bootstrap
-- `AUSLEGALSEARCH_ORA_INDEX_TYPE=HNSW|IVF`
-- `AUSLEGALSEARCH_ORA_DISTANCE=COSINE|EUCLIDEAN|EUCLIDEAN_SQUARED|DOT|MANHATTAN|HAMMING`
-- `AUSLEGALSEARCH_ORA_ACCURACY=90`                 # target accuracy for approximate search
-- `AUSLEGALSEARCH_ORA_INDEX_PARALLEL=1`            # parallelism for index build
-- `AUSLEGALSEARCH_ORA_HNSW_NEIGHBORS=16`
-- `AUSLEGALSEARCH_ORA_HNSW_EFCONSTRUCTION=200`
-- `AUSLEGALSEARCH_ORA_IVF_PARTITIONS=100`
+- `COGNEO_ORA_AUTO_VECTOR_INDEX=0|1`       # auto-create a vector index on `embeddings.vector` during bootstrap
+- `COGNEO_ORA_INDEX_TYPE=HNSW|IVF`
+- `COGNEO_ORA_DISTANCE=COSINE|EUCLIDEAN|EUCLIDEAN_SQUARED|DOT|MANHATTAN|HAMMING`
+- `COGNEO_ORA_ACCURACY=90`                 # target accuracy for approximate search
+- `COGNEO_ORA_INDEX_PARALLEL=1`            # parallelism for index build
+- `COGNEO_ORA_HNSW_NEIGHBORS=16`
+- `COGNEO_ORA_HNSW_EFCONSTRUCTION=200`
+- `COGNEO_ORA_IVF_PARTITIONS=100`
 
 > Note: Query-time `APPROX` keyword is not used in the current SQL to avoid syntax/compat issues. The optimizer may still use a compatible vector index when present.
 
 ## File Changes in this backend
 
-- `db/store.py`: Dispatcher that exports the same symbols as before, selecting backend by `AUSLEGALSEARCH_DB_BACKEND`
+- `db/store.py`: Dispatcher that exports the same symbols as before, selecting backend by `COGNEO_DB_BACKEND`
 - `db/store_postgres.py`: Postgres models and helpers (pgvector + FTS + JSONB)
 - `db/store_oracle.py`: Oracle models and helpers (native `VECTOR` + native `JSON`, SQL `vector_distance`, JSON_SERIALIZE for metadata LIKE)
   - `create_all_tables()` on Oracle creates only core tables by default (users, documents, embeddings, sessions, session_files, chat_sessions, conversion_files). Relational normalization tables are not auto-created.
@@ -89,14 +89,14 @@ This document explains how to run AUSLegalSearch with Oracle Database 26ai as th
 ## Verification
 
 1) Set environment
-- `export AUSLEGALSEARCH_DB_BACKEND=oracle`
+- `export COGNEO_DB_BACKEND=oracle`
 - `export ORACLE_SQLALCHEMY_URL="oracle+oracledb://user:pass@myadb_high"`
   - or set `ORACLE_DB_USER` / `ORACLE_DB_PASSWORD` / `ORACLE_DB_DSN` (and `ORACLE_WALLET_LOCATION` if using wallet)
 
 2) Ping and bootstrap
 - The FastAPI/Gradio/Streamlit apps and ingestion workers will:
   - ping DB (`SELECT 1 FROM dual`)
-  - create core tables automatically (if `AUSLEGALSEARCH_AUTO_DDL=1`)
+  - create core tables automatically (if `COGNEO_AUTO_DDL=1`)
 
 3) Test minimal flows
 - Run ingestion for a small folder to populate data
@@ -120,5 +120,5 @@ This document explains how to run AUSLegalSearch with Oracle Database 26ai as th
 
 ## Rollback / Staying on Postgres
 
-- Simply unset or set `AUSLEGALSEARCH_DB_BACKEND=postgres`
+- Simply unset or set `COGNEO_DB_BACKEND=postgres`
 - Postgres codepaths and performance features (pgvector, FTS, trigram) remain unchanged

@@ -1,2 +1,2 @@
-# Embedding package for auslegalsearchv2.
+# Embedding package for cogneov2.
 # Handles interfacing with embedding models and APIs (sentence-transformers, HuggingFace, local, etc.)

@@ -1,4 +1,4 @@
-# AUSLegalSearchv3 — Agentic Multi-Faceted Legal AI Platform (Ollama ⬄ OCI GenAI ⬄ Oracle Database 26ai)
+# CogNeo — Agentic Multi-Faceted Legal AI Platform (Ollama ⬄ OCI GenAI ⬄ Oracle Database 26ai)
 
 ---
 
@@ -12,8 +12,8 @@ sudo apt install python3 python3-venv python3-pip git postgresql libpq-dev gcc u
 
 2) Clone, prepare, and install dependencies
 ```sh
-git clone https://github.com/shadabshaukat/auslegalsearchv3.git
-cd auslegalsearchv3
+git clone https://github.com/shadabshaukat/cogneo.git
+cd cogneo
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
@@ -27,20 +27,20 @@ Notes:
 
 Database (Postgres):
 ```sh
-export AUSLEGALSEARCH_DB_HOST=localhost
-export AUSLEGALSEARCH_DB_PORT=5432
-export AUSLEGALSEARCH_DB_USER=postgres
-export AUSLEGALSEARCH_DB_PASSWORD='YourPasswordHere'
-export AUSLEGALSEARCH_DB_NAME=postgres
+export COGNEO_DB_HOST=localhost
+export COGNEO_DB_PORT=5432
+export COGNEO_DB_USER=postgres
+export COGNEO_DB_PASSWORD='YourPasswordHere'
+export COGNEO_DB_NAME=postgres
 # Optional single DSN override:
-# export AUSLEGALSEARCH_DB_URL='postgresql+psycopg2://user:pass@host:5432/dbname'
+# export COGNEO_DB_URL='postgresql+psycopg2://user:pass@host:5432/dbname'
 ```
 
 API/Backend:
 ```sh
 export FASTAPI_API_USER=legal_api
 export FASTAPI_API_PASS=letmein
-export AUSLEGALSEARCH_API_URL=http://localhost:8000
+export COGNEO_API_URL=http://localhost:8000
 ```
 
 Oracle Cloud GenAI (optional):
@@ -65,7 +65,7 @@ export ORACLE_WALLET_LOCATION='/path/to/wallet/dir'
 Backend switch (Postgres default, Oracle optional):
 ```sh
 # Default backend remains Postgres
-export AUSLEGALSEARCH_DB_BACKEND=postgres
+export COGNEO_DB_BACKEND=postgres
 
 # To use Oracle Database 26ai backend:
 # Either provide a single SQLAlchemy DSN:
@@ -79,14 +79,14 @@ export AUSLEGALSEARCH_DB_BACKEND=postgres
 
 Embedding model (defaults are sensible):
 ```sh
-export AUSLEGALSEARCH_EMBED_MODEL='nomic-ai/nomic-embed-text-v1.5'
-export AUSLEGALSEARCH_EMBED_DIM=768
-export AUSLEGALSEARCH_EMBED_BATCH=64
+export COGNEO_EMBED_MODEL='nomic-ai/nomic-embed-text-v1.5'
+export COGNEO_EMBED_DIM=768
+export COGNEO_EMBED_BATCH=64
 ```
 
 Domain selection (future‑ready):
 ```sh
-export AUSLEGALSEARCH_DOMAIN=legal   # legal | healthcare | telecom | finance | ...
+export COGNEO_DOMAIN=legal   # legal | healthcare | telecom | finance | ...
 ```
 
 4) Network and ports
@@ -99,9 +99,9 @@ sudo iptables -I INPUT -p tcp --dport 8501 -j ACCEPT
 
 5) Launch the stack
 ```sh
-bash run_legalsearch_stack.sh
+bash run_cogneo_stack.sh
 # To stop:
-bash stop_legalsearch_stack.sh
+bash stop_cogneo_stack.sh
 # Gradio:   http://localhost:7866
 # FastAPI:  http://localhost:8000
 # Streamlit http://localhost:8501
@@ -206,37 +206,37 @@ Other helpful docs:
 Environment variables (core)
 ```
 # Postgres
-AUSLEGALSEARCH_DB_HOST=localhost
-AUSLEGALSEARCH_DB_PORT=5432
-AUSLEGALSEARCH_DB_USER=postgres
-AUSLEGALSEARCH_DB_PASSWORD='YourPasswordHere'
-AUSLEGALSEARCH_DB_NAME=postgres
+COGNEO_DB_HOST=localhost
+COGNEO_DB_PORT=5432
+COGNEO_DB_USER=postgres
+COGNEO_DB_PASSWORD='YourPasswordHere'
+COGNEO_DB_NAME=postgres
 # Optional: full DSN override
-# AUSLEGALSEARCH_DB_URL='postgresql+psycopg2://user:pass@host:5432/dbname'
+# COGNEO_DB_URL='postgresql+psycopg2://user:pass@host:5432/dbname'
 
 # Embedding model and vector dimension
-AUSLEGALSEARCH_EMBED_MODEL=nomic-ai/nomic-embed-text-v1.5
-AUSLEGALSEARCH_EMBED_DIM=768
+COGNEO_EMBED_MODEL=nomic-ai/nomic-embed-text-v1.5
+COGNEO_EMBED_DIM=768
 
 # Worker timeouts and batch size
-AUSLEGALSEARCH_EMBED_BATCH=64
-AUSLEGALSEARCH_TIMEOUT_PARSE=30
-AUSLEGALSEARCH_TIMEOUT_CHUNK=60
-AUSLEGALSEARCH_TIMEOUT_EMBED_BATCH=180
-AUSLEGALSEARCH_TIMEOUT_INSERT=120
+COGNEO_EMBED_BATCH=64
+COGNEO_TIMEOUT_PARSE=30
+COGNEO_TIMEOUT_CHUNK=60
+COGNEO_TIMEOUT_EMBED_BATCH=180
+COGNEO_TIMEOUT_INSERT=120
 
 # Optional features
-AUSLEGALSEARCH_LOG_METRICS=1
-# AUSLEGALSEARCH_USE_RCTS_GENERIC=1
+COGNEO_LOG_METRICS=1
+# COGNEO_USE_RCTS_GENERIC=1
 ```
 
 Production database pooling/timeouts (optional)
 ```
-AUSLEGALSEARCH_DB_POOL_SIZE=10
-AUSLEGALSEARCH_DB_MAX_OVERFLOW=20
-AUSLEGALSEARCH_DB_POOL_RECYCLE=1800
-AUSLEGALSEARCH_DB_POOL_TIMEOUT=30
-# AUSLEGALSEARCH_DB_STATEMENT_TIMEOUT_MS=60000
+COGNEO_DB_POOL_SIZE=10
+COGNEO_DB_MAX_OVERFLOW=20
+COGNEO_DB_POOL_RECYCLE=1800
+COGNEO_DB_POOL_TIMEOUT=30
+# COGNEO_DB_STATEMENT_TIMEOUT_MS=60000
 ```
 
 Run orchestrator (full dataset)
@@ -263,13 +263,13 @@ python3 -m ingest.beta_orchestrator \
 Notes:
 - --shards splits the file list into many shards (default GPUs*4) and dynamically schedules them across GPUs to reduce stragglers.
 - --balance_by_size greedily balances shards by total file size; orchestration auto-enables this when size skew is high.
-- Per-worker file ordering by size is enabled by env: AUSLEGALSEARCH_SORT_WORKER_FILES=1 (default). Set 0 to keep natural order.
+- Per-worker file ordering by size is enabled by env: COGNEO_SORT_WORKER_FILES=1 (default). Set 0 to keep natural order.
 
 Resume a stuck child on “remaining files” only
 ```sh
 session=beta-full-YYYYMMDD-HHMMSS
 child=${session}-gpu3
-proj=/abs/path/auslegalsearchv3
+proj=/abs/path/cogneo
 logs="$proj/logs"
 part=".beta-gpu-partition-${child}.txt"
 
@@ -337,8 +337,122 @@ Notes:
 ## Contribution and Support
 
 Raise issues, feature requests, or PRs at:  
-https://github.com/shadabshaukat/auslegalsearchv3
+https://github.com/shadabshaukat/cogneo
 
 ---
 
-**AUSLegalSearchv3 — Enterprise-grade, agentic, explainable legal AI built for the modern legal practice.**
+## Startup Banner and URLs
+
+- The run script now prints a rainbow ASCII CogNeo AI banner and the URLs for all three web stacks.
+- You can set COGNEO_HOST_DISPLAY in your environment (or .env) to control the host part in the printed URLs (default: localhost).
+
+Example output (after bash run_cogneo_stack.sh):
+- FastAPI:  http://localhost:8000/health
+- Gradio:   http://localhost:7866
+- Streamlit: http://localhost:8501
+
+Stop all services:
+- bash stop_cogneo_stack.sh
+
+---
+
+## New: Vector Backend — OpenSearch (KNN)
+
+You can serve retrieval from OpenSearch while keeping Postgres/Oracle as the system of record.
+
+Environment (.env):
+- COGNEO_VECTOR_BACKEND=opensearch
+- OPENSEARCH_HOST=http://localhost:9200
+- OPENSEARCH_INDEX=cogneo_chunks
+- Optional: OPENSEARCH_USER and OPENSEARCH_PASS
+- Ensure COGNEO_EMBED_DIM matches your embedding model dimension (e.g., 768)
+
+Backfill from DB to OpenSearch index:
+- python tools/reindex_to_opensearch.py
+  - Streams Document + Embedding rows from the DB and indexes to OpenSearch via the new adapter.
+
+Notes:
+- Registry is lazy-loaded; OpenSearch is imported only when selected.
+- Hybrid/BM25/FTS are provided by the OpenSearch adapter. Vector KNN uses HNSW (cosine).
+
+---
+
+## New: LLM Backend — AWS Bedrock
+
+In addition to Ollama and OCI GenAI, Bedrock is available via boto3.
+
+Environment (.env):
+- AWS_REGION=us-east-1
+- BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
+
+Credentials (pick one):
+- AWS CLI default profile (aws configure) -> ~/.aws/credentials
+- Environment: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY [/ AWS_SESSION_TOKEN]
+- IAM role (EC2/ECS/EKS) with bedrock:InvokeModel
+
+API usage:
+- POST /search/bedrock_rag
+- Chat endpoints: use "llm_source": "bedrock"
+
+---
+
+## Enterprise Controls (Env-Gated)
+
+Security & Auth:
+- COGNEO_AUTH_MODE=basic|jwt
+- FASTAPI_API_USER, FASTAPI_API_PASS
+- JWT settings (when using jwt):
+  - COGNEO_JWT_SECRET, COGNEO_JWT_ALG, COGNEO_JWT_EXPIRE_MIN
+- Token endpoint: POST /auth/token (returns Bearer token)  
+
+CORS:
+- COGNEO_CORS_ENABLE, COGNEO_CORS_ALLOW_ORIGINS, COGNEO_CORS_ALLOW_METHODS, COGNEO_CORS_ALLOW_HEADERS, COGNEO_CORS_ALLOW_CREDENTIALS
+
+Rate Limiting (simple, per client IP):
+- COGNEO_RATE_LIMIT_ENABLE, COGNEO_RATE_LIMIT_REQUESTS, COGNEO_RATE_LIMIT_WINDOW_S
+
+Observability:
+- COGNEO_PROMETHEUS_ENABLE (exposes /metrics via starlette-exporter)
+
+All of the above are optional and default-safe for local dev.
+
+---
+
+## Ingestion Notes (Plain Folders, No Metadata)
+
+- Point ingestion at any folder of .txt and/or .html. Dashed headers/metadata are optional.
+- The pipeline will:
+  - parse (parse_txt/parse_html),
+  - chunk (semantic with fallbacks),
+  - embed,
+  - persist to DB.
+
+Helpful toggles in .env:
+- COGNEO_USE_RCTS_GENERIC=1
+- COGNEO_FALLBACK_CHARS_PER_CHUNK=4000
+- COGNEO_FALLBACK_OVERLAP_CHARS=200
+- Optional: COGNEO_FALLBACK_CHUNK_ON_TIMEOUT=1
+
+FastAPI ingestion endpoints:
+- POST /ingest/start (body: {"directory": "/abs/path", "session_name": "ingest-YYYYMMDD"})
+- GET /ingest/sessions
+- POST /ingest/stop?session_name=...
+
+Authentication:
+- Basic (default) using FASTAPI_API_USER/PASS or JWT (see Enterprise Controls).
+
+---
+
+## Backend Selection Matrix
+
+- Default: Postgres + pgvector
+  - COGNEO_DB_BACKEND=postgres
+- Oracle Database 26ai:
+  - COGNEO_DB_BACKEND=oracle (+ ORACLE_* variables)
+- OpenSearch for serving:
+  - COGNEO_VECTOR_BACKEND=opensearch (overrides DB backend for retrieval layer)
+  - Use tools/reindex_to_opensearch.py to populate the serving index from DB
+
+---
+
+**CogNeo — Enterprise-grade, agentic, explainable legal AI built for the modern legal practice.**

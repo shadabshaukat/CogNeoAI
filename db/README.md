@@ -1,4 +1,4 @@
-# AUSLegalSearch v3 — Database Layer
+# CogNeo v3 — Database Layer
 
 Relational storage and retrieval for ingestion, search, RAG, and analytics. Uses PostgreSQL with pgvector for embeddings and FTS (tsvector) for document text. Includes connection management, ORM models, schema bootstrap (DDL), search helpers, and an optional Oracle Database 26ai connector.
 
@@ -22,20 +22,20 @@ Either use a full DSN or per-field variables. The project autoloads .env from re
 
 - Single URL (preferred when special characters in password)
 ```bash
-export AUSLEGALSEARCH_DB_URL='postgresql+psycopg2://user:percent%40encoded%3Apass@host:5432/dbname'
+export COGNEO_DB_URL='postgresql+psycopg2://user:percent%40encoded%3Apass@host:5432/dbname'
 ```
 
 - Or individual fields
 ```bash
-export AUSLEGALSEARCH_DB_HOST=localhost
-export AUSLEGALSEARCH_DB_PORT=5432
-export AUSLEGALSEARCH_DB_USER=postgres
-export AUSLEGALSEARCH_DB_PASSWORD='YourPasswordHere'
-export AUSLEGALSEARCH_DB_NAME=postgres
+export COGNEO_DB_HOST=localhost
+export COGNEO_DB_PORT=5432
+export COGNEO_DB_USER=postgres
+export COGNEO_DB_PASSWORD='YourPasswordHere'
+export COGNEO_DB_NAME=postgres
 ```
 
 3) Bootstrap schema
-- Automatically: FastAPI sets AUSLEGALSEARCH_AUTO_DDL=1 by default and calls create_all_tables() on startup
+- Automatically: FastAPI sets COGNEO_AUTO_DDL=1 by default and calls create_all_tables() on startup
 - Manually (one-off)
 ```python
 from db.store import create_all_tables
@@ -53,14 +53,14 @@ SELECT extversion FROM pg_extension WHERE extname='vector';
 ## Connection and engine (db/connector.py)
 
 - .env loader: Reads repo-root .env or CWD .env and only sets keys not already exported; exported envs win
-- URL composition: If AUSLEGALSEARCH_DB_URL unset, builds it from per-field envs with percent-encoded credentials
+- URL composition: If COGNEO_DB_URL unset, builds it from per-field envs with percent-encoded credentials
 - Engine tuning (all configurable via env):
   - pool_pre_ping=True
-  - pool_size (AUSLEGALSEARCH_DB_POOL_SIZE, default 10)
-  - max_overflow (AUSLEGALSEARCH_DB_MAX_OVERFLOW, default 20)
-  - pool_recycle (AUSLEGALSEARCH_DB_POOL_RECYCLE, default 1800s)
-  - pool_timeout (AUSLEGALSEARCH_DB_POOL_TIMEOUT, default 30s)
-  - connect_args: connect_timeout=10s, TCP keepalives, optional server-side statement timeout via AUSLEGALSEARCH_DB_STATEMENT_TIMEOUT_MS
+  - pool_size (COGNEO_DB_POOL_SIZE, default 10)
+  - max_overflow (COGNEO_DB_MAX_OVERFLOW, default 20)
+  - pool_recycle (COGNEO_DB_POOL_RECYCLE, default 1800s)
+  - pool_timeout (COGNEO_DB_POOL_TIMEOUT, default 30s)
+  - connect_args: connect_timeout=10s, TCP keepalives, optional server-side statement timeout via COGNEO_DB_STATEMENT_TIMEOUT_MS
 - Session factory: SessionLocal = sessionmaker(bind=engine)
 - ensure_pgvector(): CREATE EXTENSION IF NOT EXISTS vector
 
@@ -86,13 +86,13 @@ Schema bootstrap: create_all_tables()
   - idx_documents_content_trgm GIN trigram (content)
   - documents_fts_trigger() and tsvectorupdate trigger to refresh FTS on INSERT/UPDATE
 - Vector index:
-  - Builds IVFFLAT index (lists=100) on embeddings.vector unless AUSLEGALSEARCH_SCHEMA_LIGHT_INIT=1 (skip heavy ops on first boot)
+  - Builds IVFFLAT index (lists=100) on embeddings.vector unless COGNEO_SCHEMA_LIGHT_INIT=1 (skip heavy ops on first boot)
 - Session-file unique and status indexes:
   - UNIQUE(session_name, filepath)
   - status index
 
 Light init mode (optional)
-- Set AUSLEGALSEARCH_SCHEMA_LIGHT_INIT=1 to skip FTS backfill and vector index build during first boot on fresh setups. Apply post-load scripts later (see schema-post-load/).
+- Set COGNEO_SCHEMA_LIGHT_INIT=1 to skip FTS backfill and vector index build during first boot on fresh setups. Apply post-load scripts later (see schema-post-load/).
 
 
 ## Post-load indexing and metadata surfacing
@@ -109,8 +109,8 @@ Important:
 
 ## Embedding dimension
 
-- EMBEDDING_DIM in db/store.py uses AUSLEGALSEARCH_EMBED_DIM (default 768). It must match the embedding model used by ingestion/search (e.g., nomic v1.5 is 768D).
-- If you change models with a different dimension, you must adjust AUSLEGALSEARCH_EMBED_DIM and rebuild the vector index (and potentially re-embed data).
+- EMBEDDING_DIM in db/store.py uses COGNEO_EMBED_DIM (default 768). It must match the embedding model used by ingestion/search (e.g., nomic v1.5 is 768D).
+- If you change models with a different dimension, you must adjust COGNEO_EMBED_DIM and rebuild the vector index (and potentially re-embed data).
 
 
 ## Search helpers
@@ -199,21 +199,21 @@ FastAPI endpoint (fastapi_app.py)
 ## Environment variables summary
 
 Database core
-- AUSLEGALSEARCH_DB_URL or:
-  - AUSLEGALSEARCH_DB_HOST / AUSLEGALSEARCH_DB_PORT / AUSLEGALSEARCH_DB_USER / AUSLEGALSEARCH_DB_PASSWORD / AUSLEGALSEARCH_DB_NAME
+- COGNEO_DB_URL or:
+  - COGNEO_DB_HOST / COGNEO_DB_PORT / COGNEO_DB_USER / COGNEO_DB_PASSWORD / COGNEO_DB_NAME
 
 Pool/timeouts
-- AUSLEGALSEARCH_DB_POOL_SIZE (10)
-- AUSLEGALSEARCH_DB_MAX_OVERFLOW (20)
-- AUSLEGALSEARCH_DB_POOL_RECYCLE (1800)
-- AUSLEGALSEARCH_DB_POOL_TIMEOUT (30)
-- AUSLEGALSEARCH_DB_STATEMENT_TIMEOUT_MS (optional server-side GUC)
+- COGNEO_DB_POOL_SIZE (10)
+- COGNEO_DB_MAX_OVERFLOW (20)
+- COGNEO_DB_POOL_RECYCLE (1800)
+- COGNEO_DB_POOL_TIMEOUT (30)
+- COGNEO_DB_STATEMENT_TIMEOUT_MS (optional server-side GUC)
 
 Schema bootstrap
-- AUSLEGALSEARCH_SCHEMA_LIGHT_INIT=1 (skip heavy index/backfill during create_all_tables)
+- COGNEO_SCHEMA_LIGHT_INIT=1 (skip heavy index/backfill during create_all_tables)
 
 Embedding dimension
-- AUSLEGALSEARCH_EMBED_DIM (default 768) — must match model used
+- COGNEO_EMBED_DIM (default 768) — must match model used
 
 
 ## Operations and maintenance
@@ -237,10 +237,10 @@ Embedding dimension
   - Run CREATE EXTENSION vector; or ensure your DB image supports it
 
 - “Vector dimension mismatch”
-  - Check AUSLEGALSEARCH_EMBED_DIM vs actual model dimension
+  - Check COGNEO_EMBED_DIM vs actual model dimension
 
 - Statement timeout errors
-  - Set AUSLEGALSEARCH_DB_STATEMENT_TIMEOUT_MS (e.g., 60000) to bound long queries
+  - Set COGNEO_DB_STATEMENT_TIMEOUT_MS (e.g., 60000) to bound long queries
   - Improve index coverage (post-load scripts) and query selectivity
 
 - Slow FTS results or no matches

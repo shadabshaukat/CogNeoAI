@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Stopping AUSLegalSearch v2 services..."
+echo "Stopping CogNeo v2 services..."
 
 for service in fastapi gradio streamlit; do
     PIDFILE=".${service}_pid"

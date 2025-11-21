@@ -1,5 +1,5 @@
 """
-Oracle SQLAlchemy engine/session for AUSLegalSearch v3.
+Oracle SQLAlchemy engine/session for CogNeo v3.
 
 - Builds an SQLAlchemy engine for Oracle 26ai/23ai (Autonomous DB compatible) using python-oracledb.
 - Mirrors pool/timeouts config style used by Postgres connector.
@@ -18,10 +18,10 @@ Env variables (either ORACLE_SQLALCHEMY_URL or the individual fields must be pro
 - ORACLE_WALLET_LOCATION               # optional; sets TNS_ADMIN for Autonomous DB wallet
 
 Pool/timeouts (optional):
-- AUSLEGALSEARCH_DB_POOL_SIZE          # default 10
-- AUSLEGALSEARCH_DB_MAX_OVERFLOW       # default 20
-- AUSLEGALSEARCH_DB_POOL_RECYCLE       # default 1800s
-- AUSLEGALSEARCH_DB_POOL_TIMEOUT       # default 30s
+- COGNEO_DB_POOL_SIZE          # default 10
+- COGNEO_DB_MAX_OVERFLOW       # default 20
+- COGNEO_DB_POOL_RECYCLE       # default 1800s
+- COGNEO_DB_POOL_TIMEOUT       # default 30s
 """
 
 import os
@@ -88,10 +88,10 @@ if not ORACLE_SQLALCHEMY_URL:
     ORACLE_SQLALCHEMY_URL = f"oracle+oracledb://{user_q}:{pwd_q}@{ORA_DSN}"
 
 # Pool configuration (mirrors Postgres style)
-POOL_SIZE = int(os.environ.get("AUSLEGALSEARCH_DB_POOL_SIZE", "10"))
-MAX_OVERFLOW = int(os.environ.get("AUSLEGALSEARCH_DB_MAX_OVERFLOW", "20"))
-POOL_RECYCLE = int(os.environ.get("AUSLEGALSEARCH_DB_POOL_RECYCLE", "1800"))  # seconds
-POOL_TIMEOUT = int(os.environ.get("AUSLEGALSEARCH_DB_POOL_TIMEOUT", "30"))    # seconds
+POOL_SIZE = int(os.environ.get("COGNEO_DB_POOL_SIZE", "10"))
+MAX_OVERFLOW = int(os.environ.get("COGNEO_DB_MAX_OVERFLOW", "20"))
+POOL_RECYCLE = int(os.environ.get("COGNEO_DB_POOL_RECYCLE", "1800"))  # seconds
+POOL_TIMEOUT = int(os.environ.get("COGNEO_DB_POOL_TIMEOUT", "30"))    # seconds
 
 # Connect args for oracledb via SQLAlchemy are limited compared to psycopg2;
 # keep minimal and rely on database/sqlnet configs for timeouts/keepalives.
