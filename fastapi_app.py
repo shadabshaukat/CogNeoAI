@@ -795,6 +795,93 @@ def api_ollama_models(_: str = Depends(get_current_user)):
     print("DEBUG: /models/ollama returned models:", models)
     return models
 
+@app.get("/models/bedrock", tags=["models", "aws"])
+def api_bedrock_models(
+    regions: Optional[str] = None,
+    include_current: bool = True,
+    _: str = Depends(get_current_user)
+):
+    """
+    List AWS Bedrock on-demand foundation models.
+
+    Query params:
+      - regions: comma-separated AWS regions to query (e.g. "us-east-1,us-west-2").
+                 If omitted, only the current region is queried (unless include_current=False).
+      - include_current: if true, includes the current process region (AWS_REGION or AWS_DEFAULT_REGION).
+
+    Returns:
+      {
+        "regions": {
+           "us-east-1": {
+              "models": [
+                 {
+                   "modelId": "...",
+                   "modelName": "...",
+                   "providerName": "...",
+                   "inferenceTypesSupported": [...],
+                   "inputModalities": [...],
+                   "outputModalities": [...],
+                   "responseStreamingSupported": true|false
+                 },
+                 ...
+              ]
+           },
+           "us-west-2": { "models": [ ... ] }
+        }
+      }
+    """
+    try:
+        import boto3  # local import so app doesn't hard-depend at startup
+    except Exception as e:
+        return {"error": f"boto3 is required for this endpoint: {e}"}
+
+    # Build region list
+    region_set = set()
+    if include_current:
+        cur = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+        if cur:
+            region_set.add(cur.strip())
+    if regions:
+        for r in regions.split(","):
+            rs = r.strip()
+            if rs:
+                region_set.add(rs)
+
+    if not region_set:
+        return {"error": "No AWS region configured or provided via ?regions=."}
+
+    out = {"regions": {}}
+    for reg in sorted(region_set):
+        out["regions"][reg] = {"models": []}
+        try:
+            client = boto3.client("bedrock", region_name=reg)
+            next_token = None
+            while True:
+                kwargs = {"byInferenceType": "ON_DEMAND"}
+                if next_token:
+                    kwargs["nextToken"] = next_token
+                resp = client.list_foundation_models(**kwargs)
+                summaries = resp.get("modelSummaries", [])
+                for s in summaries:
+                    # Normalize fields to plain types
+                    info = {
+                        "modelId": s.get("modelId"),
+                        "modelName": s.get("modelName"),
+                        "providerName": s.get("providerName"),
+                        "inferenceTypesSupported": s.get("inferenceTypesSupported") or [],
+                        "inputModalities": s.get("inputModalities") or [],
+                        "outputModalities": s.get("outputModalities") or [],
+                        "responseStreamingSupported": s.get("responseStreamingSupported", False),
+                    }
+                    out["regions"][reg]["models"].append(info)
+                next_token = resp.get("nextToken")
+                if not next_token:
+                    break
+        except Exception as e:
+            out["regions"][reg]["error"] = f"{e}"
+
+    return out
+
 @app.get("/files/ls", tags=["files"])
 def api_ls(path: str, _: str = Depends(get_current_user)):
     allowed_roots = [os.getcwd(), "/home/ubuntu/data"]

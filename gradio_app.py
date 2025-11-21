@@ -168,6 +168,19 @@ def rag_chatbot(question, llm_source, ollama_model, oci_model_info_json, rag_top
                 answer += "<br><span style='color:#c42;font-size:1.03em;'>This OCI model does not support text generation. Make sure you select a model marked as LLM/TextGeneration and check Oracle Console.</span>"
         except Exception as e:
             answer = f"Error querying OCI GenAI: {e}"
+    elif llm_source == "AWS Bedrock":
+        bed_payload = {
+            "region": os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
+            "model_id": os.environ.get("BEDROCK_MODEL_ID", ""),
+            "question": question,
+            **params
+        }
+        try:
+            r_bed = requests.post(f"{API_ROOT}/search/bedrock_rag", json=bed_payload, auth=SESS.auth, timeout=60)
+            bed_data = r_bed.json() if r_bed.ok else {}
+            answer = bed_data.get("answer", "")
+        except Exception as e:
+            answer = f"Error querying Bedrock: {e}"
     else:
         rag_payload = {
             "question": question,
@@ -190,7 +203,7 @@ def rag_chatbot(question, llm_source, ollama_model, oci_model_info_json, rag_top
 def conversational_chat_fn(message, llm_source, ollama_model, oci_model_info_json, top_k, history, system_prompt, temperature, top_p, max_tokens, repeat_penalty):
     chat_history = history or []
     req = {
-        "llm_source": "ollama" if llm_source == "Local Ollama" else "oci_genai",
+        "llm_source": "ollama" if llm_source == "Local Ollama" else ("oci_genai" if llm_source == "OCI GenAI" else "bedrock"),
         "model": ollama_model,
         "message": message,
         "chat_history": chat_history,
@@ -294,7 +307,7 @@ def parse_agentic_markdown_to_steps(md_answer):
 def agentic_chat_fn(message, llm_source, ollama_model, oci_model_info_json, top_k, history, system_prompt, temperature, top_p, max_tokens, repeat_penalty):
     chat_history = history or []
     req = {
-        "llm_source": "ollama" if llm_source == "Local Ollama" else "oci_genai",
+        "llm_source": "ollama" if llm_source == "Local Ollama" else ("oci_genai" if llm_source == "OCI GenAI" else "bedrock"),
         "model": ollama_model,
         "message": message,
         "chat_history": chat_history,
@@ -563,11 +576,11 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                 )
             with gr.Tab("RAG"):
                 gr.Markdown("#### RAG-Powered Chat")
-                rag_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI"], value="Local Ollama")
+                rag_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI", "AWS Bedrock"], value="Local Ollama")
                 rag_ollama_model = gr.Dropdown(label="Ollama Model", choices=[], visible=True)
                 rag_oci_model = gr.Dropdown(label="OCI GenAI Model", choices=[], visible=False)
                 def update_rag_model_dropdowns_hide_oci(src):
-                    if src == "OCI GenAI":
+                    if src != "Local Ollama":
                         return gr.update(visible=False), gr.update(visible=False)
                     else:
                         return gr.update(choices=fetch_ollama_models(), visible=True), gr.update(choices=[], visible=False)
@@ -651,7 +664,7 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                 fts_btn.click(fts_search_fn_user, [fts_q, fts_top_k, fts_mode], [fts_results])
             with gr.Tab("Conversational Chat"):
                 gr.Markdown("#### Conversational Chatbot (RAG-style: each turn uses Top K hybrid search for context, sources shown as cards)")
-                chat_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI"], value="Local Ollama")
+                chat_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI", "AWS Bedrock"], value="Local Ollama")
                 chat_ollama_model = gr.Dropdown(label="Ollama Model", choices=[], visible=True)
                 chat_oci_model = gr.Dropdown(label="OCI GenAI Model", choices=[], visible=False)
                 chat_top_k = gr.Number(label="Top K Context Chunks", value=10, precision=0)
@@ -662,7 +675,7 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                 chat_repeat_penalty = gr.Slider(label="Repeat Penalty", value=1.1, minimum=0.5, maximum=2.0, step=0.01)
                 chat_history = gr.State([])
                 def update_chat_model_dropdowns_hide_oci(src):
-                    if src == "OCI GenAI":
+                    if src != "Local Ollama":
                         return gr.update(visible=False), gr.update(visible=False)
                     else:
                         return gr.update(choices=fetch_ollama_models(), visible=True), gr.update(choices=[], visible=False)
@@ -691,7 +704,7 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                 )
             with gr.Tab("Agentic RAG"):
                 gr.Markdown("#### Agentic RAG/Chain-of-Thought Chat (Ollama and OCI GenAI)")
-                agent_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI"], value="Local Ollama")
+                agent_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI", "AWS Bedrock"], value="Local Ollama")
                 agent_ollama_model = gr.Dropdown(label="Ollama Model", choices=[], visible=True)
                 agent_oci_model = gr.Dropdown(label="OCI GenAI Model", choices=[], visible=False)
                 agent_top_k = gr.Number(label="Top K Context Chunks", value=10, precision=0)
@@ -703,7 +716,7 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                 agent_history = gr.State([])
 
                 def update_agent_model_dropdowns_hide_oci(src):
-                    if src == "OCI GenAI":
+                    if src != "Local Ollama":
                         return gr.update(visible=False), gr.update(visible=False)
                     else:
                         return gr.update(choices=fetch_ollama_models(), visible=True), gr.update(choices=[], visible=False)

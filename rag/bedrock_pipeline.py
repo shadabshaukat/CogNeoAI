@@ -32,6 +32,20 @@ class BedrockPipeline:
         self.client = session.client("bedrock-runtime")
         self.model_id = model_id or os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
 
+    def _provider(self) -> str:
+        mid = (self.model_id or "").lower()
+        if mid.startswith("anthropic."):
+            return "anthropic"
+        if mid.startswith("meta."):
+            return "meta"
+        if mid.startswith("mistral."):
+            return "mistral"
+        if mid.startswith("cohere."):
+            return "cohere"
+        if mid.startswith("amazon.") or "titan" in mid:
+            return "titan"
+        return "unknown"
+
     def _format_blocks(self, context_chunks: Optional[List[str]], chunk_metadata: Optional[List[Dict[str, Any]]]) -> List[str]:
         blocks: List[str] = []
         if chunk_metadata is None:
@@ -66,21 +80,100 @@ class BedrockPipeline:
         prompt = f"{sys_prompt}\n\nCONTEXT:\n{context}\n\nQUESTION: {question}\nANSWER:"
 
         try:
-            # Generic text generation request (model-specific request bodies vary across providers)
+            import json as _json
+
+            provider = self._provider()
+            body_dict: Dict[str, Any]
+
+            if provider == "anthropic":
+                # Claude 3 family expects messages + anthropic_version
+                body_dict = {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": int(max_tokens),
+                    "temperature": float(temperature),
+                    "top_p": float(top_p),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [{"type": "text", "text": prompt}]
+                        }
+                    ]
+                }
+            elif provider == "meta":
+                # Meta Llama 3 instruct accepts "prompt", max_gen_len, temperature, top_p
+                inst_prompt = f"[INST] <<SYS>>{sys_prompt}<</SYS>>\n{context}\n\n{question} [/INST]"
+                body_dict = {
+                    "prompt": inst_prompt,
+                    "max_gen_len": int(max_tokens),
+                    "temperature": float(temperature),
+                    "top_p": float(top_p),
+                }
+            elif provider == "mistral":
+                # Mistral instruct accepts "prompt", max_tokens, temperature, top_p
+                body_dict = {
+                    "prompt": prompt,
+                    "max_tokens": int(max_tokens),
+                    "temperature": float(temperature),
+                    "top_p": float(top_p),
+                }
+            elif provider == "cohere":
+                # Cohere Command family - bedrock often expects "prompt" & "max_tokens"
+                body_dict = {
+                    "prompt": prompt,
+                    "max_tokens": int(max_tokens),
+                    "temperature": float(temperature),
+                    # Cohere uses "p" not top_p; pass both to be safe if backend ignores unknown
+                    "p": float(top_p),
+                    "top_p": float(top_p),
+                }
+            else:
+                # Default to Titan Text format
+                body_dict = {
+                    "inputText": prompt,
+                    "textGenerationConfig": {
+                        "temperature": float(temperature),
+                        "topP": float(top_p),
+                        "maxTokenCount": int(max_tokens),
+                    }
+                }
+
             req = {
                 "modelId": self.model_id,
                 "contentType": "application/json",
                 "accept": "application/json",
-                "body": (
-                    '{"inputText": ' + repr(prompt) + ', "textGenerationConfig": '
-                    + '{"temperature": %s, "topP": %s, "maxTokenCount": %s}}'
-                ) % (float(temperature), float(top_p), int(max_tokens))
+                "body": _json.dumps(body_dict),
             }
+
             resp = self.client.invoke_model(**req)
-            import json as _json
             data = _json.loads(resp.get("body").read().decode("utf-8"))
-            # Common fields; Bedrock providers may return slightly different envelopes
-            answer = data.get("outputText") or data.get("generation") or str(data)
+
+            # Parse provider-specific responses
+            answer = None
+            if provider == "anthropic":
+                # content: [{"type":"text","text":"..."}]
+                try:
+                    content = data.get("content") or []
+                    if content and isinstance(content, list):
+                        first = content[0]
+                        if isinstance(first, dict):
+                            answer = first.get("text")
+                except Exception:
+                    answer = None
+            if not answer and "generation" in data and isinstance(data.get("generation"), str):
+                answer = data.get("generation")
+            if not answer and "outputText" in data:
+                answer = data.get("outputText")
+            if not answer and "outputs" in data and isinstance(data["outputs"], list) and data["outputs"]:
+                # Mistral often returns {"outputs":[{"text":"..."}], ...}
+                out0 = data["outputs"][0]
+                if isinstance(out0, dict):
+                    answer = out0.get("text") or out0.get("outputText")
+            if not answer and "generations" in data and isinstance(data["generations"], list) and data["generations"]:
+                # Cohere often returns {"generations":[{"text":"..."}]}
+                answer = data["generations"][0].get("text")
+
+            if not answer:
+                answer = str(data)
         except Exception as e:
             answer = f"Error querying Bedrock: {e}"
 
