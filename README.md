@@ -1,4 +1,4 @@
-# CogNeo — Agentic Multi-Faceted AI Platform (Ollama ⬄ OCI GenAI ⬄ Oracle Database 26ai ⬄ AWS Bedrock)
+# CogNeo — Agentic Multi-Faceted AI Platform (Ollama ⬄ OCI GenAI ⬄ AWS Bedrock ⬄ Oracle Database 26ai ⬄ PostgreSQL)
 
 ```sh
  ████████╗ ██████╗  ██████╗ ███╗  ██╗██████   ██████╗       █████╗   ██████╗ 
