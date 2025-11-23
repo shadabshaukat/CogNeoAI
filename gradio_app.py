@@ -519,7 +519,7 @@ def fts_search_fn(query, top_k):
 
 # ===== UI =====
 
-with gr.Blocks(title="CogNeo RAG UI", css="""
+CSS = """
 #llm-answer-box {
     color: #10890b !important;
     font-size: 1.13em;
@@ -638,7 +638,9 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
 @keyframes spin {
   to {transform: rotate(360deg);}
 }
-""") as demo:
+"""
+with gr.Blocks(title="CogNeo RAG UI") as demo:
+    gr.HTML(f"<style>{CSS}</style>")
     gr.Markdown("# CogNeo RAG Platform")
 
     login_box = gr.Row(visible=True)
