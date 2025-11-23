@@ -17,6 +17,7 @@ import os
 import html
 import json
 import re
+import time
 
 from db.store import create_all_tables
 
@@ -31,6 +32,11 @@ if os.environ.get("COGNEO_AUTO_DDL", "1") == "1":
 API_ROOT = os.environ.get("COGNEO_API_URL", "http://localhost:8000")
 SESS = type("Session", (), {"user": None, "auth": None})()
 SESS.auth = None
+
+# Reuse HTTP connection and cache Bedrock model listings (to avoid repeated fetches on UI updates)
+_HTTP = requests.Session()
+_BEDROCK_CACHE = {"ts": 0, "grouped": None}
+_BEDROCK_TTL = int(os.environ.get("COGNEO_BEDROCK_CACHE_TTL", "60"))  # seconds
 
 DEFAULT_SYSTEM_PROMPT = """You are an expert Australian legal research and compliance AI assistant.
 Answer strictly from the provided sources and context. Always cite the source section/citation for every statement. If you do not know the answer from the context, reply: "Not found in the provided legal documents."
@@ -77,12 +83,16 @@ def fetch_ollama_models():
 
 def fetch_bedrock_models_grouped():
     """
-    Returns dict provider -> list of (display, modelId) for current region or the first region returned.
-    Display format: 'Provider — ModelName (modelId)' but we store only 'ModelName (modelId)' in display for provider-specific dropdown.
+    Cached: returns dict provider -> list of (display, modelId) for current region.
+    Display format stored as 'ModelName (modelId)' for provider-specific dropdowns.
     """
-    grouped = {}
     try:
-        resp = requests.get(f"{API_ROOT}/models/bedrock?include_current=true", auth=SESS.auth, timeout=25)
+        now = time.time()
+        if _BEDROCK_CACHE["grouped"] is not None and (now - _BEDROCK_CACHE["ts"] < _BEDROCK_TTL):
+            return _BEDROCK_CACHE["grouped"] or {}
+
+        grouped = {}
+        resp = _HTTP.get(f"{API_ROOT}/models/bedrock?include_current=true", auth=SESS.auth, timeout=10)
         data = resp.json() if resp.ok else {}
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         region_models = []
@@ -101,12 +111,15 @@ def fetch_bedrock_models_grouped():
             mid = str(m.get("modelId") or "").strip()
             disp = f"{name} ({mid})"
             grouped.setdefault(prov, []).append((disp, mid))
-        # Sort within each provider by display
         for prov in list(grouped.keys()):
             grouped[prov].sort(key=lambda x: x[0].lower())
+
+        _BEDROCK_CACHE["ts"] = now
+        _BEDROCK_CACHE["grouped"] = grouped
         return grouped
     except Exception:
-        return {}
+        # Fallback to last good cache if available
+        return _BEDROCK_CACHE.get("grouped") or {}
 
 def bedrock_providers():
     """
