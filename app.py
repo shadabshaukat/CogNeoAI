@@ -337,7 +337,7 @@ if st.session_state.get("run_ingest"):
 st.markdown("## Document & Hybrid Search")
 query = st.text_input("Enter a research question or query...")
 top_k = st.slider("How many results?", min_value=1, max_value=10, value=5)
-alpha = st.slider("Hybrid weighting (higher: more semantic, lower: more keyword)", min_value=0.0, max_value=1.0, value=0.5)
+alpha = st.slider("Hybrid weighting (higher value: more semantic, lower value : more keyword) (0 = keyword, 1 = semantic)", min_value=0.0, max_value=1.0, value=0.5)
 llm_source_rag = st.selectbox("LLM Source for RAG", ["Local Ollama", "OCI GenAI", "AWS Bedrock"], index=0)
 selected_ollama_model = None
 _ollama_models = []

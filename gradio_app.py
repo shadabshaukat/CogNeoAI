@@ -642,7 +642,7 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
             with gr.Tab("Hybrid Search"):
                 hybrid_query = gr.Textbox(label="Enter a research question", lines=2)
                 hybrid_top_k = gr.Number(label="Top K Results", value=10, precision=0)
-                hybrid_alpha = gr.Slider(label="Hybrid weighting (0 = keyword, 1 = semantic)", value=0.5, minimum=0.0, maximum=1.0)
+                hybrid_alpha = gr.Slider(label="Hybrid weighting (higher value: more semantic, lower value : more keyword) (0 = keyword, 1 = semantic)", value=0.5, minimum=0.0, maximum=1.0)
                 hybrid_btn = gr.Button("Hybrid Search")
                 hybrid_results = gr.HTML(label="Results", value="", show_label=False)
                 hybrid_btn.click(

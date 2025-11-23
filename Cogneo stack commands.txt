@@ -1,0 +1,65 @@
+
+ ████████╗ ██████╗  ██████╗ ███╗  ██╗██████   ██████╗       █████╗   ██████╗ 
+██╔══════╝██╔═══██╗██╔════╝ ███╗  ██║██╔════╝██╔═══██╗     ██╔══██╗  ╚═██╔═╝ 
+██║       ██║   ██║██║  ███╗█╔██╗ ██║█████╗  ██║   ██║     ███████║    ██║   
+██║       ██║   ██║██║   ██║█║╚██╗██║██╔══╝  ██║   ██║     ██╔══██║    ██║   
+╚███████╗ ╚██████╔╝╚██████╔╝█║ ╚████║███████╗╚██████╔╝     ██║  ██║  ██████║
+  ╚═════╝  ╚═════╝  ╚═════╝ ═╝  ╚═══╝╚══════╝ ╚═════╝      ╚═╝  ╚═╝  ╚═════╝ 
+     
+
+
+ssh -fNT -v -L 1521:10.180.2.77:1521 opc@168.138.10.135 -i mydemo_vcn.priv &
+
+python3 -m ingest.beta_orchestrator --root "/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/HCA” \
+--session "beta-HCA-$(date +%Y%m%d-%H%M%S)” \
+--log_dir "/Users/shadab/Downloads/auslegalsearchv3/logs” \
+--target_tokens 1500 \
+--overlap_tokens 192 \
+--max_tokens 1920 \
+--balance_by_size
+
+python3 -m ingest.beta_orchestrator --root "/Users/shadab/Downloads/AustLII_Clean_Beta_DataSet/treaties” \
+--session "beta-treaties-$(date +%Y%m%d-%H%M%S)” \
+--log_dir "/Users/shadab/Downloads/CogNeo/logs” \
+--target_tokens 1500 \
+--overlap_tokens 192 \
+--max_tokens 1920 \
+--balance_by_size
+
+
+
+ ████████╗ ██████╗  ██████╗ ███╗  ██╗██████   ██████╗       █████╗   ██████╗ 
+██╔══════╝██╔═══██╗██╔════╝ ███╗  ██║██╔════╝██╔═══██╗     ██╔══██╗  ╚═██╔═╝ 
+██║       ██║   ██║██║  ███╗█╔██╗ ██║█████╗  ██║   ██║     ███████║    ██║   
+██║       ██║   ██║██║   ██║█║╚██╗██║██╔══╝  ██║   ██║     ██╔══██║    ██║   
+╚███████╗ ╚██████╔╝╚██████╔╝█║ ╚████║███████╗╚██████╔╝     ██║  ██║  ██████║
+  ╚═════╝  ╚═════╝  ╚═════╝ ═╝  ╚═══╝╚══════╝ ╚═════╝      ╚═╝  ╚═╝  ╚═════╝ 
+     
+
+Question :
+
+Tell me about International Convention for the Safety of Life?
+
+
+
+
+
+  
+  
+  
+ 
+
+
+
+
+
+
+  
+
+      			
+      
+      
+      
+      
+      
+         
