@@ -434,7 +434,7 @@ if st.button("Hybrid Search & RAG", disabled=disable_rag_btn):
         # Collect context and metadata for RAG:
         context_chunks = [h["text"] for h in hits]
         sources = [h["citation"] for h in hits]
-        chunk_metadata = [h.get("chunk_metadata") for h in hits]
+        chunk_metadata = [h.get("chunk_metadata") or {} for h in hits]
         with st.spinner(f"Calling {llm_source_rag}..."):
             answer = ""
             try:
@@ -506,6 +506,15 @@ if st.button("Hybrid Search & RAG", disabled=disable_rag_btn):
                         for k, v in md.items():
                             st.write(f"- {k}: {v}")
                     st.info(src)
+                st.markdown("**Context Chunks Used (Details):**")
+                for i, h in enumerate(hits, 1):
+                    with st.expander(f"{i}. {h.get('citation','?')} | Score: {h.get('hybrid_score',0):.3f}"):
+                        if h.get("chunk_metadata"):
+                            st.markdown("**Metadata:**")
+                            for k, v in (h.get("chunk_metadata") or {}).items():
+                                st.write(f"- {k}: {v}")
+                        st.write(f"**Source:** {h.get('source','?')}\n**Chunk:** {h.get('chunk_index','?')}\n**Format:** {h.get('format','?')}")
+                        st.write(f"**Text:**\n{h.get('text','')[:1200]}{'...' if len(h.get('text',''))>1200 else ''}")
                 good = st.button("👍 Mark answer as correct (QA)")
                 bad = st.button("👎 Mark answer as incorrect (QA)")
                 if good or bad:
@@ -693,6 +702,22 @@ if user_msg:
                 err = f"[bedrock-error] {e}"
                 placeholder.markdown(err)
                 st.session_state["chat_msgs"].append({"role": "assistant", "content": err})
+
+# Show detailed context cards for chat turn if available
+try:
+    _hits_ctx = hits
+except Exception:
+    _hits_ctx = []
+if _hits_ctx:
+    st.markdown("**Context Chunks Used (Details):**")
+    for i, h in enumerate(_hits_ctx, 1):
+        with st.expander(f"{i}. {h.get('citation','?')} | Score: {h.get('hybrid_score',0):.3f}"):
+            if h.get("chunk_metadata"):
+                st.markdown("**Metadata:**")
+                for k, v in (h.get("chunk_metadata") or {}).items():
+                    st.write(f"- {k}: {v}")
+            st.write(f"**Source:** {h.get('source','?')}\n**Chunk:** {h.get('chunk_index','?')}\n**Format:** {h.get('format','?')}")
+            st.write(f"**Text:**\n{h.get('text','')[:1200]}{'...' if len(h.get('text',''))>1200 else ''}")
 
 st.markdown("---")
 st.caption("© 2025 CogNeo | Parallel ingestion, explainable AI, pgvector & Ollama")

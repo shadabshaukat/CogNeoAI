@@ -229,8 +229,7 @@ with st.sidebar:
         except Exception:
             ollama_models = []
         if ollama_models:
-            selected_ollama = st.selectbox("Ollama model", ollama_models, index=0, key="ollama_model")
-            st.session_state["ollama_model"] = selected_ollama
+            st.selectbox("Ollama model", ollama_models, index=0, key="ollama_model")
         else:
             st.session_state["ollama_model"] = None
             st.warning("No local Ollama models found. Please load a model to your local host to use as a LLM Source")
@@ -468,6 +467,20 @@ if user_msg:
                     st.markdown(f"{i}. [{c}]({c})")
                 else:
                     st.markdown(f"{i}. {c}")
+
+        # Detailed context chunks (expanders), similar to Hybrid Search & RAG
+        if hits:
+            st.markdown("**Context Chunks Used (Details):**")
+            for i, h in enumerate(hits, 1):
+                with st.expander(f"{i}. {h.get('citation','?')} | Score: {h.get('hybrid_score',0):.3f}"):
+                    meta = h.get("chunk_metadata") or {}
+                    if meta:
+                        st.markdown("**Metadata:**")
+                        for k, v in meta.items():
+                            st.write(f"- {k}: {v}")
+                    st.write(f"**Source:** {h.get('source','?')}\n**Chunk:** {h.get('chunk_index','?')}\n**Format:** {h.get('format','?')}")
+                    text = h.get('text','')
+                    st.write(f"**Text:**\n{text[:1200]}{'...' if len(text)>1200 else ''}")
 
     # Commit assistant turn with citations and save snapshot
     st.session_state["chat_msgs"].append({"role": "assistant", "content": assistant_text, "citations": citations})
