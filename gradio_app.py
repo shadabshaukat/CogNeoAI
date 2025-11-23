@@ -1,6 +1,7 @@
-""" 
+"""
 CogNeo Gradio UI:
-- Tabs for Hybrid Search, Vector Search, RAG (with supersystem prompt), Conversational Chat, and Agentic Chat (chain-of-thought for both Ollama and OCI GenAI).
+- Tabs for Hybrid Search, Vector Search, RAG (with supersystem prompt), Conversational Chat, and Agentic Chat
+- Supports Local Ollama, OCI GenAI, and AWS Bedrock with provider+model selection for Bedrock
 """
 
 # Always load .env if present (so AUTO_DDL and DB_* vars are available even if shell didn't export them)
@@ -18,6 +19,7 @@ import json
 import re
 
 from db.store import create_all_tables
+
 # Ensure DB schema on UI startup when enabled
 if os.environ.get("COGNEO_AUTO_DDL", "1") == "1":
     try:
@@ -71,6 +73,105 @@ def fetch_ollama_models():
     except Exception:
         return []
 
+# ===== AWS Bedrock helpers =====
+
+def fetch_bedrock_models_grouped():
+    """
+    Returns dict provider -> list of (display, modelId) for current region or the first region returned.
+    Display format: 'Provider — ModelName (modelId)' but we store only 'ModelName (modelId)' in display for provider-specific dropdown.
+    """
+    grouped = {}
+    try:
+        resp = requests.get(f"{API_ROOT}/models/bedrock?include_current=true", auth=SESS.auth, timeout=25)
+        data = resp.json() if resp.ok else {}
+        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+        region_models = []
+        if isinstance(data, dict):
+            regions = data.get("regions") or {}
+            if isinstance(regions, dict):
+                if region and region in regions:
+                    region_models = (regions.get(region) or {}).get("models") or []
+                else:
+                    for _reg, payload in regions.items():
+                        region_models = (payload or {}).get("models") or []
+                        break
+        for m in region_models:
+            prov = str(m.get("providerName") or "Provider").strip()
+            name = str(m.get("modelName") or m.get("modelId") or "Unknown").strip()
+            mid = str(m.get("modelId") or "").strip()
+            disp = f"{name} ({mid})"
+            grouped.setdefault(prov, []).append((disp, mid))
+        # Sort within each provider by display
+        for prov in list(grouped.keys()):
+            grouped[prov].sort(key=lambda x: x[0].lower())
+        return grouped
+    except Exception:
+        return {}
+
+def bedrock_providers():
+    """
+    Returns provider list with the default model's provider (if resolvable) first.
+    """
+    grouped = fetch_bedrock_models_grouped()
+    if not grouped:
+        return []
+    providers = sorted(grouped.keys(), key=lambda x: x.lower())
+    default_id = os.environ.get("BEDROCK_MODEL_ID", "")
+    if default_id:
+        try:
+            # Find provider for default model
+            for prov, lst in grouped.items():
+                if any(mid == default_id for (_disp, mid) in lst):
+                    providers = [prov] + [p for p in providers if p != prov]
+                    break
+        except Exception:
+            pass
+    return providers
+
+def bedrock_models_for_provider(provider: str | None):
+    """
+    Returns display list for given provider; if None, use first provider or provider of default model.
+    """
+    grouped = fetch_bedrock_models_grouped()
+    if not grouped:
+        return []
+    providers = bedrock_providers()
+    use_prov = provider if (provider and provider in grouped) else (providers[0] if providers else None)
+    if not use_prov:
+        return []
+    default_id = os.environ.get("BEDROCK_MODEL_ID", "")
+    items = grouped.get(use_prov, [])
+    if default_id:
+        items.sort(key=lambda x: (0 if x[1] == default_id else 1, x[0].lower()))
+    return [disp for (disp, _mid) in items]
+
+def bedrock_default_selection():
+    """
+    Returns (default_provider, default_model_display) based on BEDROCK_MODEL_ID when resolvable; otherwise first provider/model.
+    """
+    grouped = fetch_bedrock_models_grouped()
+    if not grouped:
+        return None, None
+    providers = bedrock_providers()
+    default_provider = providers[0] if providers else None
+    default_model_disp = None
+    default_id = os.environ.get("BEDROCK_MODEL_ID", "")
+    if default_id:
+        for prov, lst in grouped.items():
+            for disp, mid in lst:
+                if mid == default_id:
+                    default_provider = prov
+                    default_model_disp = disp
+                    break
+            if default_model_disp:
+                break
+    # If no explicit default model display, pick first model of default provider
+    if not default_model_disp and default_provider and default_provider in grouped and grouped[default_provider]:
+        default_model_disp = grouped[default_provider][0][0]
+    return default_provider, default_model_disp
+
+# ===== Misc helpers =====
+
 def format_context_cards(sources, chunk_metadata, context_chunks):
     if not sources and not context_chunks:
         return ""
@@ -116,13 +217,15 @@ def vector_search_fn(query, top_k):
         hits = []
     return "<ul>" + "".join(f"<li>{html.escape(h.get('text','')[:150])}{'...' if len(h.get('text',''))>150 else ''}</li>" for h in hits) + "</ul>"
 
-def rag_chatbot(question, llm_source, ollama_model, oci_model_info_json, rag_top_k, system_prompt, temperature, top_p, max_tokens, repeat_penalty):
+# ===== RAG and Chat call functions =====
+
+def rag_chatbot(question, llm_source, ollama_model, oci_model_info_json, bedrock_provider, bedrock_model, rag_top_k, system_prompt, temperature, top_p, max_tokens, repeat_penalty):
     if not question:
         return "", "", ""
     try:
         resp = requests.post(
             f"{API_ROOT}/search/hybrid",
-            json={"query": question, "top_k": rag_top_k, "alpha": 0.5, "reranker": "mxbai-rerank-xsmall"}, 
+            json={"query": question, "top_k": rag_top_k, "alpha": 0.5, "reranker": "mxbai-rerank-xsmall"},
             auth=SESS.auth, timeout=30
         )
         resp.raise_for_status()
@@ -132,7 +235,7 @@ def rag_chatbot(question, llm_source, ollama_model, oci_model_info_json, rag_top
         chunk_metadata = [h.get("chunk_metadata") or {} for h in hits]
     except Exception:
         context_chunks, sources, chunk_metadata = [], [], []
-    answer, srcs_md = "", ""
+    answer = ""
     params = {
         "context_chunks": context_chunks or [],
         "sources": sources or [],
@@ -165,13 +268,16 @@ def rag_chatbot(question, llm_source, ollama_model, oci_model_info_json, rag_top
             oci_data = r_oci.json() if r_oci.ok else {}
             answer = oci_data.get("answer", "")
             if answer and "does not support TextGeneration" in answer:
-                answer += "<br><span style='color:#c42;font-size:1.03em;'>This OCI model does not support text generation. Make sure you select a model marked as LLM/TextGeneration and check Oracle Console.</span>"
+                answer += "<br><span style='color:#c42;font-size:1.03em;'>This OCI model does not support text generation.</span>"
         except Exception as e:
             answer = f"Error querying OCI GenAI: {e}"
     elif llm_source == "AWS Bedrock":
+        # Extract model_id from dropdown selection like 'ModelName (modelId)'
+        m = re.search(r"\(([^)]+)\)\s*$", str(bedrock_model)) if bedrock_model else None
+        selected_mid = m.group(1) if m else (bedrock_model or os.environ.get("BEDROCK_MODEL_ID", ""))
         bed_payload = {
             "region": os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
-            "model_id": os.environ.get("BEDROCK_MODEL_ID", ""),
+            "model_id": selected_mid,
             "question": question,
             **params
         }
@@ -200,7 +306,7 @@ def rag_chatbot(question, llm_source, ollama_model, oci_model_info_json, rag_top
     context_html = format_context_cards(sources, chunk_metadata, context_chunks)
     return answer_html, context_html, sources
 
-def conversational_chat_fn(message, llm_source, ollama_model, oci_model_info_json, top_k, history, system_prompt, temperature, top_p, max_tokens, repeat_penalty):
+def conversational_chat_fn(message, llm_source, ollama_model, oci_model_info_json, bedrock_provider, bedrock_model, top_k, history, system_prompt, temperature, top_p, max_tokens, repeat_penalty):
     chat_history = history or []
     req = {
         "llm_source": "ollama" if llm_source == "Local Ollama" else ("oci_genai" if llm_source == "OCI GenAI" else "bedrock"),
@@ -215,6 +321,9 @@ def conversational_chat_fn(message, llm_source, ollama_model, oci_model_info_jso
         "top_k": top_k,
         "oci_config": {},
     }
+    if llm_source == "AWS Bedrock":
+        m = re.search(r"\(([^)]+)\)\s*$", str(bedrock_model)) if bedrock_model else None
+        req["model"] = (m.group(1) if m else (bedrock_model or os.environ.get("BEDROCK_MODEL_ID", "")))
     if llm_source == "OCI GenAI":
         try:
             model_info = json.loads(oci_model_info_json) if oci_model_info_json else {}
@@ -232,32 +341,7 @@ def conversational_chat_fn(message, llm_source, ollama_model, oci_model_info_jso
         sources = data.get("sources", [])
         chunk_metadata = data.get("chunk_metadata", [])
         context_chunks = data.get("context_chunks", [])
-
-        def extract_oci_text(ans):
-            if isinstance(ans, dict) and "chat_response" in ans:
-                try:
-                    choices = ans["chat_response"].get("choices", [])
-                    if choices:
-                        content_list = choices[0]["message"].get("content", [])
-                        if content_list and isinstance(content_list[0], dict):
-                            return content_list[0].get("text", "")
-                except Exception:
-                    return str(ans)
-            if isinstance(ans, str):
-                try:
-                    asdict = json.loads(ans)
-                    return extract_oci_text(asdict)
-                except Exception:
-                    return ans
-            return str(ans)
-        if isinstance(answer, dict) or (isinstance(answer, str) and answer.strip().startswith("{")):
-            try:
-                answer_text = extract_oci_text(answer)
-            except Exception:
-                answer_text = str(answer)
-        else:
-            answer_text = answer
-        formatted_answer = html.escape(answer_text).replace("\\n", "<br>").replace("\n", "<br>")
+        formatted_answer = html.escape(answer).replace("\\n", "<br>").replace("\n", "<br>")
     except Exception as e:
         formatted_answer = f"Error querying chatbot API: {e}"
         sources = []
@@ -304,7 +388,7 @@ def parse_agentic_markdown_to_steps(md_answer):
         steps.append(("Final Conclusion", "Conclusion", concl.group(1).strip()))
     return steps
 
-def agentic_chat_fn(message, llm_source, ollama_model, oci_model_info_json, top_k, history, system_prompt, temperature, top_p, max_tokens, repeat_penalty):
+def agentic_chat_fn(message, llm_source, ollama_model, oci_model_info_json, bedrock_provider, bedrock_model, top_k, history, system_prompt, temperature, top_p, max_tokens, repeat_penalty):
     chat_history = history or []
     req = {
         "llm_source": "ollama" if llm_source == "Local Ollama" else ("oci_genai" if llm_source == "OCI GenAI" else "bedrock"),
@@ -319,6 +403,9 @@ def agentic_chat_fn(message, llm_source, ollama_model, oci_model_info_json, top_
         "top_k": top_k,
         "oci_config": {},
     }
+    if llm_source == "AWS Bedrock":
+        m = re.search(r"\(([^)]+)\)\s*$", str(bedrock_model)) if bedrock_model else None
+        req["model"] = (m.group(1) if m else (bedrock_model or os.environ.get("BEDROCK_MODEL_ID", "")))
     if llm_source == "OCI GenAI":
         try:
             model_info = json.loads(oci_model_info_json) if oci_model_info_json else {}
@@ -332,21 +419,7 @@ def agentic_chat_fn(message, llm_source, ollama_model, oci_model_info_json, top_
     try:
         resp = requests.post(f"{API_ROOT}/chat/agentic", json=req, auth=SESS.auth, timeout=180)
         data = resp.json()
-        # If answer is a dict or JSON string, extract the text. If it's not a str, get its .get("answer").
         answer = data.get("answer", "") if isinstance(data, dict) else str(data)
-        # If it's still a JSON/dict-looking string, try to extract text field cleanly, ignore JSON:
-        try:
-            if isinstance(answer, str) and answer.strip().startswith("{"):
-                parsed = json.loads(answer)
-                answer = parsed.get("answer", answer)
-        except Exception:
-            pass
-        if not isinstance(answer, str):
-            answer = str(answer)
-        sources = data.get("sources", [])
-        chunk_metadata = data.get("chunk_metadata", [])
-        context_chunks = data.get("context_chunks", [])
-
         steps = parse_agentic_markdown_to_steps(answer)
         final_ans = ""
         if steps and steps[-1][0].lower().startswith("final conclusion"):
@@ -371,8 +444,7 @@ def agentic_chat_fn(message, llm_source, ollama_model, oci_model_info_json, top_
         step_html += "</div>"
         answer_html = (
             f"<div class='llm-answer-main'>{html.escape(final_ans).replace('\\n','<br>').replace('\n','<br>')}</div>"
-            + step_html +
-            format_context_cards(sources, chunk_metadata, context_chunks)
+            + step_html
         )
     except Exception as e:
         answer_html = f"Error querying agentic chat API: {e}"
@@ -386,7 +458,6 @@ def agentic_chat_fn(message, llm_source, ollama_model, oci_model_info_json, top_
     })
     def render_history(hist):
         html_out = "<div class='chatbox-ct'>"
-        # Always show the most recent user message, then the full chain as assistant. Only one exchange is shown.
         if len(hist) >= 2:
             last_user = hist[-2]
             last_assistant = hist[-1]
@@ -403,6 +474,8 @@ def agentic_chat_fn(message, llm_source, ollama_model, oci_model_info_json, top_
         html_out += "</div>"
         return html_out or "<i>No conversation yet.</i>"
     return render_history(chat_history), chat_history
+
+# ===== FTS search wrapper =====
 
 def fts_search_fn(query, top_k):
     try:
@@ -430,6 +503,8 @@ def fts_search_fn(query, top_k):
         </div>
         """
     return out
+
+# ===== UI =====
 
 with gr.Blocks(title="CogNeo RAG UI", css="""
 #llm-answer-box {
@@ -563,6 +638,7 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
 
     with gr.Row(visible=False) as app_panel:
         with gr.Tabs():
+            # ===== Hybrid Search tab =====
             with gr.Tab("Hybrid Search"):
                 hybrid_query = gr.Textbox(label="Enter a research question", lines=2)
                 hybrid_top_k = gr.Number(label="Top K Results", value=10, precision=0)
@@ -574,35 +650,70 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                     inputs=[hybrid_query, hybrid_top_k, hybrid_alpha],
                     outputs=[hybrid_results]
                 )
+            # ===== RAG tab =====
             with gr.Tab("RAG"):
                 gr.Markdown("#### RAG-Powered Chat")
                 rag_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI", "AWS Bedrock"], value="Local Ollama")
                 rag_ollama_model = gr.Dropdown(label="Ollama Model", choices=[], visible=True)
                 rag_oci_model = gr.Dropdown(label="OCI GenAI Model", choices=[], visible=False)
-                def update_rag_model_dropdowns_hide_oci(src):
-                    if src != "Local Ollama":
-                        return gr.update(visible=False), gr.update(visible=False)
-                    else:
-                        return gr.update(choices=fetch_ollama_models(), visible=True), gr.update(choices=[], visible=False)
-                rag_llm_source.change(update_rag_model_dropdowns_hide_oci, inputs=[rag_llm_source], outputs=[rag_ollama_model, rag_oci_model])
+                rag_bedrock_provider = gr.Dropdown(label="AWS Bedrock Provider", choices=[], visible=False)
+                rag_bedrock_model = gr.Dropdown(label="AWS Bedrock Model", choices=[], visible=False)
+
+                def update_rag_model_dropdowns(src):
+                    if src == "Local Ollama":
+                        return (
+                            gr.update(choices=fetch_ollama_models(), visible=True, value=None),
+                            gr.update(visible=False),
+                            gr.update(visible=False),
+                            gr.update(visible=False)
+                        )
+                    elif src == "AWS Bedrock":
+                        providers = bedrock_providers()
+                        default_provider, default_model_disp = bedrock_default_selection()
+                        initial_models = bedrock_models_for_provider(default_provider) if default_provider else []
+                        return (
+                            gr.update(visible=False),
+                            gr.update(visible=False),
+                            gr.update(choices=providers, visible=True, value=default_provider),
+                            gr.update(choices=initial_models, visible=True, value=default_model_disp)
+                        )
+                    else:  # OCI GenAI
+                        return (
+                            gr.update(visible=False),
+                            gr.update(choices=[], visible=False),  # keep hidden; configured via env
+                            gr.update(visible=False),
+                            gr.update(visible=False)
+                        )
+
+                def update_rag_bedrock_models(provider):
+                    # When provider changes, if default model belongs to this provider select it, else first model
+                    models = bedrock_models_for_provider(provider)
+                    _, default_model_disp = bedrock_default_selection()
+                    default_value = default_model_disp if (default_model_disp and default_model_disp in models) else (models[0] if models else None)
+                    return gr.update(choices=models, visible=True, value=default_value)
+
+                rag_llm_source.change(update_rag_model_dropdowns, inputs=[rag_llm_source], outputs=[rag_ollama_model, rag_oci_model, rag_bedrock_provider, rag_bedrock_model])
+                rag_bedrock_provider.change(update_rag_bedrock_models, inputs=[rag_bedrock_provider], outputs=[rag_bedrock_model])
+
                 rag_top_k = gr.Number(label="Top K Context Chunks", value=10, precision=0)
                 rag_system_prompt = gr.Textbox(label="System Prompt", value=DEFAULT_SYSTEM_PROMPT, lines=3)
                 rag_temperature = gr.Slider(label="Temperature", value=0.1, minimum=0.0, maximum=1.5, step=0.01)
                 rag_top_p = gr.Slider(label="Top P", value=0.9, minimum=0.0, maximum=1.0, step=0.01)
                 rag_max_tokens = gr.Number(label="Max Tokens", value=1024, precision=0)
                 rag_repeat_penalty = gr.Slider(label="Repeat Penalty", value=1.1, minimum=0.5, maximum=2.0, step=0.01)
-                # (Removed old update_rag_model_dropdowns handler; only use update_rag_model_dropdowns_hide_oci above)
+
                 rag_question = gr.Textbox(label="Enter your question", lines=2)
                 rag_ask_btn = gr.Button("Ask")
                 rag_answer = gr.HTML(label="Answer", elem_id="llm-answer-box", value="")
                 rag_context = gr.HTML(label="Context / Sources", value="", show_label=False)
                 rag_ask_btn.click(
                     rag_chatbot,
-                    inputs=[rag_question, rag_llm_source, rag_ollama_model, rag_oci_model, rag_top_k, rag_system_prompt, rag_temperature, rag_top_p, rag_max_tokens, rag_repeat_penalty],
+                    inputs=[rag_question, rag_llm_source, rag_ollama_model, rag_oci_model, rag_bedrock_provider, rag_bedrock_model, rag_top_k, rag_system_prompt, rag_temperature, rag_top_p, rag_max_tokens, rag_repeat_penalty],
                     outputs=[rag_answer, rag_context, gr.State()]
                 )
+            # ===== FTS tab =====
             with gr.Tab("Full Text Search"):
-                gr.Markdown("**Full Text Search** &mdash; phrase and stemmed search across documents and/or all indexed metadata fields. Choose search area below.")
+                gr.Markdown("**Full Text Search** — phrase and stemmed search across documents and/or all indexed metadata fields.")
                 fts_q = gr.Textbox(label="Search Query", lines=2)
                 fts_top_k = gr.Number(label="Max Results", value=10, precision=0)
                 fts_mode = gr.Dropdown(
@@ -610,14 +721,9 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                     choices=["Both", "Documents", "Chunk Metadata"],
                     value="Both"
                 )
-                fts_btn = gr.Button("Full Text Search")
                 fts_results = gr.HTML(value="", show_label=False)
                 def fts_search_fn_user(q, k, mode):
-                    mode_map = {
-                        "Both": "both",
-                        "Documents": "documents",
-                        "Chunk Metadata": "metadata"
-                    }
+                    mode_map = {"Both": "both", "Documents": "documents", "Chunk Metadata": "metadata"}
                     mode_val = mode_map.get(mode, "both")
                     try:
                         resp = requests.post(
@@ -661,12 +767,17 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                         </div>
                         """
                     return out
+                fts_btn = gr.Button("Full Text Search")
                 fts_btn.click(fts_search_fn_user, [fts_q, fts_top_k, fts_mode], [fts_results])
+
+            # ===== Conversational Chat tab =====
             with gr.Tab("Conversational Chat"):
-                gr.Markdown("#### Conversational Chatbot (RAG-style: each turn uses Top K hybrid search for context, sources shown as cards)")
+                gr.Markdown("#### Conversational Chatbot (RAG-style per turn)")
                 chat_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI", "AWS Bedrock"], value="Local Ollama")
                 chat_ollama_model = gr.Dropdown(label="Ollama Model", choices=[], visible=True)
                 chat_oci_model = gr.Dropdown(label="OCI GenAI Model", choices=[], visible=False)
+                chat_bedrock_provider = gr.Dropdown(label="AWS Bedrock Provider", choices=[], visible=False)
+                chat_bedrock_model = gr.Dropdown(label="AWS Bedrock Model", choices=[], visible=False)
                 chat_top_k = gr.Number(label="Top K Context Chunks", value=10, precision=0)
                 chat_system_prompt = gr.Textbox(label="System Prompt", value=DEFAULT_SYSTEM_PROMPT, lines=3)
                 chat_temperature = gr.Slider(label="Temperature", value=0.1, minimum=0.0, maximum=1.5, step=0.01)
@@ -674,12 +785,42 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                 chat_max_tokens = gr.Number(label="Max Tokens", value=1024, precision=0)
                 chat_repeat_penalty = gr.Slider(label="Repeat Penalty", value=1.1, minimum=0.5, maximum=2.0, step=0.01)
                 chat_history = gr.State([])
-                def update_chat_model_dropdowns_hide_oci(src):
-                    if src != "Local Ollama":
-                        return gr.update(visible=False), gr.update(visible=False)
-                    else:
-                        return gr.update(choices=fetch_ollama_models(), visible=True), gr.update(choices=[], visible=False)
-                chat_llm_source.change(update_chat_model_dropdowns_hide_oci, inputs=[chat_llm_source], outputs=[chat_ollama_model, chat_oci_model])
+
+                def update_chat_model_dropdowns(src):
+                    if src == "Local Ollama":
+                        return (
+                            gr.update(choices=fetch_ollama_models(), visible=True, value=None),
+                            gr.update(visible=False),
+                            gr.update(visible=False),
+                            gr.update(visible=False)
+                        )
+                    elif src == "AWS Bedrock":
+                        providers = bedrock_providers()
+                        default_provider, default_model_disp = bedrock_default_selection()
+                        initial_models = bedrock_models_for_provider(default_provider) if default_provider else []
+                        return (
+                            gr.update(visible=False),
+                            gr.update(visible=False),
+                            gr.update(choices=providers, visible=True, value=default_provider),
+                            gr.update(choices=initial_models, visible=True, value=default_model_disp)
+                        )
+                    else:  # OCI GenAI
+                        return (
+                            gr.update(visible=False),
+                            gr.update(choices=[], visible=False),
+                            gr.update(visible=False),
+                            gr.update(visible=False)
+                        )
+
+                def update_chat_bedrock_models(provider):
+                    models = bedrock_models_for_provider(provider)
+                    _, default_model_disp = bedrock_default_selection()
+                    default_value = default_model_disp if (default_model_disp and default_model_disp in models) else (models[0] if models else None)
+                    return gr.update(choices=models, visible=True, value=default_value)
+
+                chat_llm_source.change(update_chat_model_dropdowns, inputs=[chat_llm_source], outputs=[chat_ollama_model, chat_oci_model, chat_bedrock_provider, chat_bedrock_model])
+                chat_bedrock_provider.change(update_chat_bedrock_models, inputs=[chat_bedrock_provider], outputs=[chat_bedrock_model])
+
                 chat_message = gr.Textbox(label="Your message", lines=2)
                 send_btn = gr.Button("Send")
                 conversation_html = gr.HTML(label="Conversation", value="", show_label=False)
@@ -692,21 +833,25 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
 
                 send_btn.click(
                     show_in_progress,
-                    inputs=[chat_message, chat_llm_source, chat_ollama_model, chat_oci_model,
+                    inputs=[chat_message, chat_llm_source, chat_ollama_model, chat_oci_model, chat_bedrock_provider, chat_bedrock_model,
                             chat_top_k, chat_history, chat_system_prompt, chat_temperature, chat_top_p, chat_max_tokens, chat_repeat_penalty],
                     outputs=[conversation_html, chat_history],
                     queue=False
                 ).then(
                     conversational_chat_fn,
-                    inputs=[chat_message, chat_llm_source, chat_ollama_model, chat_oci_model,
+                    inputs=[chat_message, chat_llm_source, chat_ollama_model, chat_oci_model, chat_bedrock_provider, chat_bedrock_model,
                             chat_top_k, chat_history, chat_system_prompt, chat_temperature, chat_top_p, chat_max_tokens, chat_repeat_penalty],
                     outputs=[conversation_html, chat_history]
                 )
+
+            # ===== Agentic RAG tab =====
             with gr.Tab("Agentic RAG"):
-                gr.Markdown("#### Agentic RAG/Chain-of-Thought Chat (Ollama and OCI GenAI)")
+                gr.Markdown("#### Agentic RAG/Chain-of-Thought Chat")
                 agent_llm_source = gr.Dropdown(label="LLM Source", choices=["Local Ollama", "OCI GenAI", "AWS Bedrock"], value="Local Ollama")
                 agent_ollama_model = gr.Dropdown(label="Ollama Model", choices=[], visible=True)
                 agent_oci_model = gr.Dropdown(label="OCI GenAI Model", choices=[], visible=False)
+                agent_bedrock_provider = gr.Dropdown(label="AWS Bedrock Provider", choices=[], visible=False)
+                agent_bedrock_model = gr.Dropdown(label="AWS Bedrock Model", choices=[], visible=False)
                 agent_top_k = gr.Number(label="Top K Context Chunks", value=10, precision=0)
                 agent_system_prompt = gr.Textbox(label="System Prompt", value=DEFAULT_SYSTEM_PROMPT, lines=3)
                 agent_temperature = gr.Slider(label="Temperature", value=0.1, minimum=0.0, maximum=1.5, step=0.01)
@@ -715,23 +860,47 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                 agent_repeat_penalty = gr.Slider(label="Repeat Penalty", value=1.1, minimum=0.5, maximum=2.0, step=0.01)
                 agent_history = gr.State([])
 
-                def update_agent_model_dropdowns_hide_oci(src):
-                    if src != "Local Ollama":
-                        return gr.update(visible=False), gr.update(visible=False)
-                    else:
-                        return gr.update(choices=fetch_ollama_models(), visible=True), gr.update(choices=[], visible=False)
+                def update_agent_model_dropdowns(src):
+                    if src == "Local Ollama":
+                        return (
+                            gr.update(choices=fetch_ollama_models(), visible=True, value=None),
+                            gr.update(visible=False),
+                            gr.update(visible=False),
+                            gr.update(visible=False)
+                        )
+                    elif src == "AWS Bedrock":
+                        providers = bedrock_providers()
+                        default_provider, default_model_disp = bedrock_default_selection()
+                        initial_models = bedrock_models_for_provider(default_provider) if default_provider else []
+                        return (
+                            gr.update(visible=False),
+                            gr.update(visible=False),
+                            gr.update(choices=providers, visible=True, value=default_provider),
+                            gr.update(choices=initial_models, visible=True, value=default_model_disp)
+                        )
+                    else:  # OCI GenAI
+                        return (
+                            gr.update(visible=False),
+                            gr.update(choices=[], visible=False),
+                            gr.update(visible=False),
+                            gr.update(visible=False)
+                        )
 
-                agent_llm_source.change(update_agent_model_dropdowns_hide_oci, inputs=[agent_llm_source], outputs=[agent_ollama_model, agent_oci_model])
+                def update_agent_bedrock_models(provider):
+                    models = bedrock_models_for_provider(provider)
+                    _, default_model_disp = bedrock_default_selection()
+                    default_value = default_model_disp if (default_model_disp and default_model_disp in models) else (models[0] if models else None)
+                    return gr.update(choices=models, visible=True, value=default_value)
+
+                agent_llm_source.change(update_agent_model_dropdowns, inputs=[agent_llm_source], outputs=[agent_ollama_model, agent_oci_model, agent_bedrock_provider, agent_bedrock_model])
+                agent_bedrock_provider.change(update_agent_bedrock_models, inputs=[agent_bedrock_provider], outputs=[agent_bedrock_model])
+
                 agent_message = gr.Textbox(label="Your message", lines=2)
                 agent_send_btn = gr.Button("Send")
                 agent_conversation_html = gr.HTML(label="Conversation", value="", show_label=False)
 
                 def show_agentic_in_progress(*args):
-                    # Defensive: if agent_message is None/default, ensure user_msg is a string
-                    if args and len(args) > 0 and args[0] is not None:
-                        user_msg = str(args[0])
-                    else:
-                        user_msg = ""
+                    user_msg = str(args[0]) if (args and len(args) > 0 and args[0] is not None) else ""
                     progress_html = (
                         "<div class='chatbox-ct'>"
                         "<div class='bubble user-bubble'><b>User:</b> " + html.escape(user_msg) + "</div>"
@@ -743,7 +912,7 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                 agent_send_btn.click(
                     show_agentic_in_progress,
                     inputs=[
-                        agent_message, agent_llm_source, agent_ollama_model, agent_oci_model,
+                        agent_message, agent_llm_source, agent_ollama_model, agent_oci_model, agent_bedrock_provider, agent_bedrock_model,
                         agent_top_k, agent_history, agent_system_prompt, agent_temperature, agent_top_p, agent_max_tokens, agent_repeat_penalty
                     ],
                     outputs=[agent_conversation_html, agent_history],
@@ -751,20 +920,16 @@ with gr.Blocks(title="CogNeo RAG UI", css="""
                 ).then(
                     agentic_chat_fn,
                     inputs=[
-                        agent_message, agent_llm_source, agent_ollama_model, agent_oci_model,
+                        agent_message, agent_llm_source, agent_ollama_model, agent_oci_model, agent_bedrock_provider, agent_bedrock_model,
                         agent_top_k, agent_history, agent_system_prompt, agent_temperature, agent_top_p, agent_max_tokens, agent_repeat_penalty
                     ],
                     outputs=[agent_conversation_html, agent_history]
                 )
+
     login_btn.click(
         login_fn,
         inputs=[username, password],
-        outputs=[
-            login_box,
-            app_panel,
-            login_err,
-            login_err,
-        ]
+        outputs=[login_box, app_panel, login_err, login_err]
     )
 
 if __name__ == "__main__":

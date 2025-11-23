@@ -235,6 +235,60 @@ with st.sidebar:
             st.session_state["ollama_model"] = None
             st.warning("No local Ollama models found. Please load a model to your local host to use as a LLM Source")
 
+    # AWS Bedrock: Provider + Model selection (region-aware)
+    if st.session_state["llm_source"] == "AWS Bedrock":
+        try:
+            resp = requests.get(
+                f"{API_ROOT}/models/bedrock?include_current=true",
+                auth=AUTH_TUPLE,
+                timeout=25
+            )
+            data = resp.json() if resp.ok else {}
+            region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+            region_models = []
+            if isinstance(data, dict):
+                regions = data.get("regions") or {}
+                if isinstance(regions, dict):
+                    if region and region in regions:
+                        region_models = (regions.get(region) or {}).get("models") or []
+                    else:
+                        for _reg, payload in regions.items():
+                            region_models = (payload or {}).get("models") or []
+                            break
+            provider_to_models = {}
+            for m in region_models:
+                prov = str(m.get("providerName") or "Provider").strip()
+                name = str(m.get("modelName") or m.get("modelId") or "Unknown").strip()
+                mid = str(m.get("modelId") or "").strip()
+                label = f"{name} ({mid})"
+                provider_to_models.setdefault(prov, []).append((label, mid))
+            # Sort models within each provider
+            for prov in list(provider_to_models.keys()):
+                provider_to_models[prov].sort(key=lambda x: x[0].lower())
+            providers = sorted(provider_to_models.keys(), key=lambda x: x.lower())
+            # Prefer provider of default model first
+            default_id = os.environ.get("BEDROCK_MODEL_ID", "")
+            if default_id:
+                for prov, lst in provider_to_models.items():
+                    if any(mid == default_id for (_lbl, mid) in lst):
+                        providers = [prov] + [p for p in providers if p != prov]
+                        break
+            sel_prov = st.selectbox("AWS Bedrock Provider", providers, index=0 if providers else None, key="bedrock_provider")
+            models_list = provider_to_models.get(sel_prov, [])
+            if default_id and models_list:
+                models_list = sorted(models_list, key=lambda x: (0 if x[1] == default_id else 1, x[0].lower()))
+            model_labels = [lbl for (lbl, _mid) in models_list]
+            sel_label = st.selectbox("AWS Bedrock Model", model_labels, index=0 if model_labels else None, key="bedrock_model_label")
+            sel_id = None
+            for lbl, mid in models_list:
+                if lbl == sel_label:
+                    sel_id = mid
+                    break
+            st.session_state["bedrock_model_id"] = sel_id or default_id
+        except Exception as e:
+            st.warning(f"Failed to load Bedrock models: {e}")
+            st.session_state["bedrock_model_id"] = os.environ.get("BEDROCK_MODEL_ID","")
+
     st.markdown("### Generation Controls")
     st.session_state["chat_top_k"] = st.number_input("Top K context chunks", min_value=3, max_value=100, value=int(st.session_state["chat_top_k"]), step=1)
     st.session_state["llm_temperature"] = st.slider("Temperature", 0.0, 2.0, float(st.session_state["llm_temperature"]), step=0.05)
@@ -387,7 +441,7 @@ if user_msg:
             try:
                 payload = {
                     "region": os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
-                    "model_id": os.environ.get("BEDROCK_MODEL_ID",""),
+                    "model_id": st.session_state.get("bedrock_model_id") or os.environ.get("BEDROCK_MODEL_ID",""),
                     "question": user_msg,
                     "context_chunks": context_chunks or [],
                     "sources": [],

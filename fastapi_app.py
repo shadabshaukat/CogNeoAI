@@ -546,7 +546,10 @@ def api_agentic_chat(req: ChatAgenticReq, _: str = Depends(get_current_user)):
         )
         answer = llm_resp.get("answer", "")
     elif req.llm_source.lower() == "bedrock":
-        pipeline = BedrockPipeline(region=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"))
+        pipeline = BedrockPipeline(
+            region=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
+            model_id=req.model or os.environ.get("BEDROCK_MODEL_ID")
+        )
         llm_resp = pipeline.query(
             question=req.message,
             **query_args
@@ -634,7 +637,10 @@ def api_conversational_chat(req: ChatConversationReq, _: str = Depends(get_curre
         out["chunk_metadata"] = chunk_metadata
         out["context_chunks"] = context_chunks
     elif req.llm_source.lower() == "bedrock":
-        pipeline = BedrockPipeline(region=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"))
+        pipeline = BedrockPipeline(
+            region=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
+            model_id=req.model or os.environ.get("BEDROCK_MODEL_ID")
+        )
         llm_resp = pipeline.query(
             question=req.message,
             chat_history=history,

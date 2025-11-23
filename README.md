@@ -462,4 +462,218 @@ Authentication:
 
 ---
 
+## API Testing via curl (Complete)
+
+Auth
+- Basic (default): use -u FASTAPI_API_USER:FASTAPI_API_PASS (defaults legal_api:letmein)
+- JWT (optional): obtain from POST /auth/token then pass Authorization: Bearer <token>
+
+Quick env (optional helpers)
+```sh
+export API=http://localhost:8000
+export AUTH="legal_api:letmein"
+export AWS_REGION=${AWS_REGION:-us-east-1}
+export BEDROCK_MODEL_ID=${BEDROCK_MODEL_ID:-anthropic.claude-3-haiku-20240307-v1:0}
+# OCI helpers (if using OCI endpoints)
+export OCI_COMP=${OCI_COMPARTMENT_OCID:-"ocid1.compartment.oc1..xxxxx"}
+export OCI_MODEL=${OCI_GENAI_MODEL_OCID:-"ocid1.generativeai.oc1..xxxxx"}
+export OCI_REGION=${OCI_REGION:-"ap-sydney-1"}
+```
+
+Utility
+- Health:
+```sh
+curl -u $AUTH $API/health
+```
+- Files (restricted roots):
+```sh
+curl -u $AUTH "$API/files/ls?path=$(pwd)"
+```
+
+Auth (JWT mode only)
+```sh
+# Issue token
+curl -s -X POST $API/auth/token -H 'Content-Type: application/json' \
+  -d '{"username":"legal_api","password":"letmein"}'
+# Then use: -H "Authorization: Bearer <access_token>"
+```
+
+Models
+- Ollama models:
+```sh
+curl -u $AUTH $API/models/ollama
+```
+- OCI GenAI models (pretrained/chat-capable):
+```sh
+curl -u $AUTH $API/models/oci_genai
+```
+- AWS Bedrock on-demand models (current region):
+```sh
+curl -u $AUTH "$API/models/bedrock"
+```
+- AWS Bedrock cross-region (example: us-east-1 and us-west-2):
+```sh
+curl -u $AUTH "$API/models/bedrock?regions=us-east-1,us-west-2"
+```
+
+Documents
+```sh
+curl -u $AUTH $API/documents
+curl -u $AUTH $API/documents/1
+```
+
+Ingestion
+```sh
+# Start
+curl -u $AUTH -X POST $API/ingest/start -H 'Content-Type: application/json' \
+  -d '{"directory":"/abs/path/to/data","session_name":"ingest-'"$(date +%Y%m%d-%H%M%S)"'"}'
+# List active sessions
+curl -u $AUTH $API/ingest/sessions
+# Stop by name
+curl -u $AUTH -X POST "$API/ingest/stop?session_name=ingest-20250101-120000"
+```
+
+Search: Vector, Hybrid, FTS, Reranker
+```sh
+# Vector
+curl -u $AUTH -X POST $API/search/vector -H 'Content-Type: application/json' \
+  -d '{"query":"privacy act exemptions","top_k":5}'
+
+# Hybrid (vector+bm25)
+curl -u $AUTH -X POST $API/search/hybrid -H 'Content-Type: application/json' \
+  -d '{"query":"privacy act exemptions","top_k":8,"alpha":0.5}'
+
+# FTS (both, documents, or metadata)
+curl -u $AUTH -X POST $API/search/fts -H 'Content-Type: application/json' \
+  -d '{"query":"law enforcement agency","top_k":10,"mode":"both"}'
+
+# Reranker info
+curl -u $AUTH $API/models/reranker
+curl -u $AUTH $API/models/rerankers
+# (Optional) Download a reranker (async)
+curl -u $AUTH -X POST $API/models/reranker/download -H 'Content-Type: application/json' \
+  -d '{"name":"mxbai-rerank-xsmall","hf_repo":"mixedbread-ai/mxbai-rerank-xsmall"}'
+
+# Rerank (re-score top vector hits with a given cross-encoder)
+curl -u $AUTH -X POST $API/search/rerank -H 'Content-Type: application/json' \
+  -d '{"query":"privacy act exemptions","top_k":5,"model":"mxbai-rerank-xsmall"}'
+```
+
+RAG (Ollama, OCI, AWS Bedrock)
+```sh
+# RAG (Ollama)
+curl -u $AUTH -X POST $API/search/rag -H 'Content-Type: application/json' \
+  -d '{
+    "question":"Summarize penalties under the Spam Act",
+    "model":"llama3",
+    "context_chunks":["..."],
+    "chunk_metadata":[{}],
+    "temperature":0.1, "top_p":0.9, "max_tokens":1024, "repeat_penalty":1.1
+  }'
+
+# RAG streaming (Ollama) — plain text stream
+curl -u $AUTH -N -X POST $API/search/rag_stream -H 'Content-Type: application/json' \
+  -d '{
+    "question":"Outline exemptions in Australian Privacy Principles",
+    "model":"llama3",
+    "context_chunks":["..."],
+    "chunk_metadata":[{}],
+    "temperature":0.1, "top_p":0.9, "max_tokens":1024, "repeat_penalty":1.1
+  }'
+
+# RAG (OCI GenAI)
+curl -u $AUTH -X POST $API/search/oci_rag -H 'Content-Type: application/json' \
+  -d "{
+    \"oci_config\": {\"compartment_id\":\"$OCI_COMP\",\"model_id\":\"$OCI_MODEL\",\"region\":\"$OCI_REGION\"},
+    \"question\":\"List mandatory reportable data breaches\",
+    \"context_chunks\":[\"...\"], \"chunk_metadata\":[{}],
+    \"temperature\":0.1, \"top_p\":0.9, \"max_tokens\":1024, \"repeat_penalty\":1.1
+  }"
+
+# RAG (AWS Bedrock) — current region + selected model
+curl -u $AUTH -X POST $API/search/bedrock_rag -H 'Content-Type: application/json' \
+  -d "{
+    \"region\":\"$AWS_REGION\",
+    \"model_id\":\"$BEDROCK_MODEL_ID\",
+    \"question\":\"Provide a summary of consent requirements under APP\",
+    \"context_chunks\":[\"...\"], \"chunk_metadata\":[{}],
+    \"temperature\":0.1, \"top_p\":0.9, \"max_tokens\":1024, \"repeat_penalty\":1.1
+  }"
+```
+
+Chat (Conversational)
+```sh
+# Conversational (Ollama)
+curl -u $AUTH -X POST $API/chat/conversation -H 'Content-Type: application/json' \
+  -d '{
+    "llm_source":"ollama", "model":"llama3",
+    "message":"What is a Notifiable Data Breach?",
+    "chat_history":[], "system_prompt":"...","temperature":0.1,"top_p":0.9,"max_tokens":1024,"repeat_penalty":1.1,"top_k":10
+  }'
+
+# Conversational (OCI GenAI)
+curl -u $AUTH -X POST $API/chat/conversation -H 'Content-Type: application/json' \
+  -d "{
+    \"llm_source\":\"oci_genai\",
+    \"message\":\"Which APPs cover direct marketing?\", \"chat_history\":[],
+    \"oci_config\":{\"compartment_id\":\"$OCI_COMP\",\"model_id\":\"$OCI_MODEL\",\"region\":\"$OCI_REGION\"},
+    \"system_prompt\":\"...\",\"temperature\":0.1,\"top_p\":0.9,\"max_tokens\":1024,\"repeat_penalty\":1.1,\"top_k\":10
+  }"
+
+# Conversational (AWS Bedrock)
+curl -u $AUTH -X POST $API/chat/conversation -H 'Content-Type: application/json' \
+  -d "{
+    \"llm_source\":\"bedrock\",
+    \"model\":\"$BEDROCK_MODEL_ID\",
+    \"message\":\"Summarize the OAIC guidance on consent.\",
+    \"chat_history\":[], \"system_prompt\":\"...\",
+    \"temperature\":0.1,\"top_p\":0.9,\"max_tokens\":1024,\"repeat_penalty\":1.1,\"top_k\":10
+  }"
+```
+
+Chat (Agentic / Chain-of-Thought)
+```sh
+# Agentic (Ollama)
+curl -u $AUTH -X POST $API/chat/agentic -H 'Content-Type: application/json' \
+  -d '{
+    "llm_source":"ollama","model":"llama3",
+    "message":"Explain implied consent with legal citations.",
+    "chat_history":[], "system_prompt":"...", "temperature":0.1,"top_p":0.9,"max_tokens":1024,"repeat_penalty":1.1,"top_k":10
+  }'
+
+# Agentic (OCI GenAI)
+curl -u $AUTH -X POST $API/chat/agentic -H 'Content-Type: application/json' \
+  -d "{
+    \"llm_source\":\"oci_genai\",
+    \"message\":\"Outline APP 7 with sources.\",
+    \"chat_history\":[],
+    \"oci_config\":{\"compartment_id\":\"$OCI_COMP\",\"model_id\":\"$OCI_MODEL\",\"region\":\"$OCI_REGION\"},
+    \"system_prompt\":\"...\",\"temperature\":0.1,\"top_p\":0.9,\"max_tokens\":1024,\"repeat_penalty\":1.1,\"top_k\":10
+  }"
+
+# Agentic (AWS Bedrock)
+curl -u $AUTH -X POST $API/chat/agentic -H 'Content-Type: application/json' \
+  -d "{
+    \"llm_source\":\"bedrock\",
+    \"model\":\"$BEDROCK_MODEL_ID\",
+    \"message\":\"Detail cross-border disclosure rules with citations.\",
+    \"chat_history\":[], \"system_prompt\":\"...\",
+    \"temperature\":0.1,\"top_p\":0.9,\"max_tokens\":1024,\"repeat_penalty\":1.1,\"top_k\":10
+  }"
+```
+
+Oracle Database 26ai (optional)
+```sh
+curl -u $AUTH -X POST $API/db/oracle23ai_query -H 'Content-Type: application/json' \
+  -d '{
+    "user":"scott","password":"tiger","dsn":"myadb_high","wallet_location":"/path/to/wallet",
+    "sql":"select 1 from dual"
+  }'
+```
+
+Notes
+- Bedrock provider payloads are auto-formatted based on modelId (Anthropic/Meta/Mistral/Cohere/Titan); ensure your model is available in AWS_REGION.
+- For streaming (Ollama /search/rag_stream), -N keeps curl output unbuffered.
+- All endpoints are protected; use -u for Basic (or JWT with Authorization header).
+
 **CogNeo — Enterprise-grade, agentic, explainable legal AI built for the modern legal practice.**
