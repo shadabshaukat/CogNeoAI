@@ -272,6 +272,14 @@ Notes:
 - --balance_by_size greedily balances shards by total file size; orchestration auto-enables this when size skew is high.
 - Per-worker file ordering by size is enabled by env: COGNEO_SORT_WORKER_FILES=1 (default). Set 0 to keep natural order.
 
+Optional tuning (if desired) :
+- Increase shard count for large corpora to improve balance, e.g. --shards GPUs*16 (for 4 GPUs and ~100k files, try 64–128).
+
+- Keep/enable size-balanced partitioning for skewed file sizes: --balance_by_size (auto-enables when Gini ≥ 0.6).
+
+- If you want faster shard turnover, reduce the poll sleep to 0.2s (currently 0.5s) to shave reassign latency.
+
+
 Resume a stuck child on “remaining files” only
 ```sh
 session=beta-full-YYYYMMDD-HHMMSS
@@ -293,43 +301,6 @@ python3 -m ingest.beta_worker ${child}-r1 \
   --target_tokens 1500 --overlap_tokens 192 --max_tokens 1920 \
   --log_dir "$logs"
 ```
-
----
-
-## API Specification
-
-### POST /chat/agentic — Agentic Chain-of-Thought LLM Endpoint
-
-Request:
-```json
-{
-  "llm_source": "ollama",
-  "model": "llama3",
-  "message": "Explain the procedure for contesting a will in NSW.",
-  "chat_history": [],
-  "system_prompt": "...",
-  "temperature": 0.15,
-  "top_p": 0.9,
-  "max_tokens": 1920,
-  "repeat_penalty": 1.07,
-  "top_k": 12,
-  "oci_config": {"compartment_id": "...", "model_id": "...", "region": "ap-sydney-1"}
-}
-```
-
-Response:
-```json
-{
-  "answer": "Step 1 - Thought: ...\nStep 2 - Action: ...\nFinal Conclusion: ...",
-  "sources": ["Succession Act 2006 (NSW) s 96", "Practical Law ..."],
-  "chunk_metadata": [{"citation": "Succession Act 2006 (NSW) s 96", "url": "https://..."}],
-  "context_chunks": ["Section 96 of the Act provides that...", "..."]
-}
-```
-
-Notes:
-- Each CoT step is prefixed as "Step X - [Label]:" to enable reliable parsing and UI rendering.
-- Sources/citations and context are aligned to reasoning steps for legal traceability.
 
 ---
 
