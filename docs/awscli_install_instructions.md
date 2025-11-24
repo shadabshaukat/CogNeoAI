@@ -34,3 +34,11 @@ And follow the prompts (enter your credentials).
 ---
 
 *Reference: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html*
+
+
+# Easy Method on Ubuntu for install with 'ubuntu' user #
+```sh
+sudo snap install aws-cli --classic
+```
+
+*Reference: https://linuxconfig.org/installing-aws-cli-on-ubuntu-a-step-by-step-guide
