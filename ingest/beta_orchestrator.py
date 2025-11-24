@@ -382,21 +382,24 @@ def orchestrate(
     # Wait and schedule remaining shards
     exit_codes: List[int] = []
     while active:
-        # poll active processes
-        still_active = []
-        for item in active:
+        # Iterate and modify 'active' in place to avoid losing newly launched procs
+        i = 0
+        while i < len(active):
+            item = active[i]
             proc = item["proc"]
             gpu_i = item["gpu"]
             if proc.poll() is None:
-                still_active.append(item)
+                i += 1
                 continue
             # finished
             exit_codes.append(proc.returncode if hasattr(proc, "returncode") else 0)
+            # remove finished item
+            active.pop(i)
             # schedule next shard on this GPU if any left
             if next_idx < len(parts):
                 _launch_shard(gpu_i, next_idx)
                 next_idx += 1
-        active = still_active
+            # do not increment i here because we popped; next item shifts into index i
         if active:
             time.sleep(0.5)
 
