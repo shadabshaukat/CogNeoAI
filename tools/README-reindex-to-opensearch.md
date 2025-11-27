@@ -41,7 +41,8 @@ OpenSearch Backfill (tools/reindex_to_opensearch.py)
 - Usage:
   ```bash
   # Ensure env is loaded as above
-  python tools/reindex_to_opensearch.py
+  source .env
+  python3 -m tools.reindex_to_opensearch
   ```
 - Migration tip:
   - If you previously created an OpenSearch index without doc_id/chunk_index/citation, create a new index (e.g., cogneo_chunks_v2) and run the backfill tool again.
