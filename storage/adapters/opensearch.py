@@ -6,12 +6,18 @@ from storage.interfaces import VectorSearchAdapter
 
 
 def _os_client() -> OpenSearch:
-    host = os.environ.get("OPENSEARCH_HOST", "http://localhost:9200")
+    host = os.environ.get("OPENSEARCH_HOST", "https://localhost:9200")
     user = os.environ.get("OPENSEARCH_USER")
     pwd = os.environ.get("OPENSEARCH_PASS")
     if user and pwd:
-        return OpenSearch(hosts=[host], http_auth=(user, pwd), verify_certs=False)
-    return OpenSearch(hosts=[host], verify_certs=False)
+        return OpenSearch(hosts=[host], http_auth=(user, pwd), verify_certs=True)
+    return OpenSearch(hosts=[host], verify_certs=True)
+
+    """
+    For OCI OpenSearch set verify_certs=True
+    For all HTTPS enabled services set verify_certs=True
+    For HTTP service set verify_certs=False
+    """
 
 
 def _index_name() -> str:
