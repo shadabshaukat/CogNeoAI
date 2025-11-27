@@ -64,6 +64,9 @@ class OpenSearchAdapter(VectorSearchAdapter):
             },
             "mappings": {
                 "properties": {
+                    "doc_id": {"type": "long"},
+                    "chunk_index": {"type": "integer"},
+                    "citation": {"type": "keyword"},
                     "text": {"type": "text"},
                     "source": {"type": "keyword"},
                     "format": {"type": "keyword"},
@@ -89,20 +92,59 @@ class OpenSearchAdapter(VectorSearchAdapter):
     def index_chunks(self, chunks: List[Dict[str, Any]], vectors, source_path: str, fmt: str) -> int:
         """
         Bulk index chunks into OpenSearch, aligned with provided vectors.
+        Accepts optional doc_id and chunk_index inside each chunk dict to preserve parity with DB records.
         """
         actions = []
         for i, ch in enumerate(chunks):
             vec = vectors[i].tolist() if hasattr(vectors[i], "tolist") else list(vectors[i])
-            actions.append({
+            doc_id = ch.get("doc_id")
+            chunk_idx = ch.get("chunk_index")
+            source_val = source_path
+            fmt_val = fmt
+
+            citation = None
+            if doc_id is not None and chunk_idx is not None:
+                try:
+                    doc_id_val = int(doc_id)
+                except Exception:
+                    doc_id_val = None
+                try:
+                    chunk_idx_val = int(chunk_idx)
+                except Exception:
+                    chunk_idx_val = None
+                if doc_id_val is not None and chunk_idx_val is not None:
+                    _id = f"{doc_id_val}#{chunk_idx_val}"
+                    citation = f"{source_val}#chunk{chunk_idx_val}"
+                else:
+                    _id = f"{source_val}#{i}"
+            else:
+                _id = f"{source_val}#{i}"
+
+            doc = {
                 "_op_type": "index",
                 "_index": self.index,
-                "_id": f"{source_path}#{i}",
+                "_id": _id,
                 "text": ch.get("text", ""),
-                "source": source_path,
-                "format": fmt,
+                "source": source_val,
+                "format": fmt_val,
                 "chunk_metadata": ch.get("chunk_metadata") or {},
                 "vector": vec
-            })
+            }
+            if doc_id is not None:
+                try:
+                    doc["doc_id"] = int(doc_id)
+                except Exception:
+                    pass
+            if chunk_idx is not None:
+                try:
+                    doc["chunk_index"] = int(chunk_idx)
+                except Exception:
+                    pass
+            if citation:
+                doc["citation"] = citation
+
+            actions.append(doc)
+
         if not actions:
             return 0
         helpers.bulk(self.client, actions, refresh=False)
@@ -126,14 +168,20 @@ class OpenSearchAdapter(VectorSearchAdapter):
         hits = []
         for h in res.get("hits", {}).get("hits", []):
             s = h.get("_source", {})
+            doc_id = s.get("doc_id")
+            chunk_idx = s.get("chunk_index")
+            vector_score = float(h.get("_score", 0.0))
             hits.append({
-                "doc_id": None,
-                "chunk_index": None,
-                "score": float(h.get("_score", 0.0)),
+                "doc_id": doc_id,
+                "chunk_index": chunk_idx,
+                "score": vector_score,
+                "vector_score": vector_score,
+                "bm25_score": 0.0,
                 "text": s.get("text"),
                 "source": s.get("source"),
                 "format": s.get("format"),
                 "chunk_metadata": s.get("chunk_metadata"),
+                "citation": s.get("citation") or (f"{s.get('source')}#chunk{chunk_idx}" if (s.get("source") and chunk_idx is not None) else None),
             })
         return hits
 
@@ -150,14 +198,20 @@ class OpenSearchAdapter(VectorSearchAdapter):
         out = []
         for h in res.get("hits", {}).get("hits", []):
             s = h.get("_source", {})
+            doc_id = s.get("doc_id")
+            chunk_idx = s.get("chunk_index")
+            bm25 = float(h.get("_score", 0.0))
             out.append({
-                "doc_id": None,
-                "chunk_index": None,
-                "score": float(h.get("_score", 0.0)),
+                "doc_id": doc_id,
+                "chunk_index": chunk_idx,
+                "score": bm25,
+                "vector_score": 0.0,
+                "bm25_score": 1.0,  # presence signal (parity with Postgres hybrid)
                 "text": s.get("text"),
                 "source": s.get("source"),
                 "format": s.get("format"),
                 "chunk_metadata": s.get("chunk_metadata"),
+                "citation": s.get("citation") or (f"{s.get('source')}#chunk{chunk_idx}" if (s.get("source") and chunk_idx is not None) else None),
             })
         return out[:top_k]
 
@@ -180,8 +234,8 @@ class OpenSearchAdapter(VectorSearchAdapter):
         for h in res.get("hits", {}).get("hits", []):
             s = h.get("_source", {})
             out.append({
-                "doc_id": None,
-                "chunk_index": None,
+                "doc_id": s.get("doc_id"),
+                "chunk_index": s.get("chunk_index"),
                 "source": s.get("source"),
                 "content": s.get("text"),
                 "text": s.get("text"),
@@ -193,7 +247,62 @@ class OpenSearchAdapter(VectorSearchAdapter):
 
     def search_hybrid(self, query: str, top_k: int = 5, alpha: float = 0.5) -> List[Dict[str, Any]]:
         """
-        Minimal hybrid: use BM25 baseline.
-        (Upstream fusion with vector KNN can be added later if needed.)
+        Hybrid fusion parity with Postgres:
+        - Embed query for KNN search
+        - Combine KNN and BM25 presence with alpha-weighted score
+        - Provide doc_id, chunk_index, citation, vector_score, bm25_score, hybrid_score
         """
-        return self.search_bm25(query, top_k=top_k)
+        try:
+            from embedding.embedder import Embedder
+            embedder = Embedder()
+            query_vec = embedder.embed([query])[0]
+        except Exception:
+            # Fallback to BM25-only if embedding fails
+            return self.search_bm25(query, top_k=top_k)
+
+        k = max(20, top_k * 2)
+        vector_hits = self.search_vector(query_vec, top_k=k)
+        bm25_hits = self.search_bm25(query, top_k=k)
+
+        all_hits: Dict[Any, Dict[str, Any]] = {}
+        for h in vector_hits:
+            key = (h.get("doc_id"), h.get("chunk_index"))
+            all_hits[key] = {
+                **h,
+                "vector_score": h.get("vector_score", h.get("score", 0.0)),
+                "bm25_score": 0.0,
+                "hybrid_score": 0.0,
+            }
+        for h in bm25_hits:
+            key = (h.get("doc_id"), h.get("chunk_index"))
+            if key in all_hits:
+                all_hits[key]["bm25_score"] = 1.0
+            else:
+                all_hits[key] = {
+                    **h,
+                    "vector_score": 0.0,
+                    "bm25_score": 1.0,
+                    "hybrid_score": 0.0,
+                }
+
+        scores = [v.get("vector_score", 0.0) for v in all_hits.values()]
+        if scores:
+            minv, maxv = min(scores), max(scores)
+            for v in all_hits.values():
+                if maxv != minv:
+                    v["vector_score_norm"] = (v.get("vector_score", 0.0) - minv) / (maxv - minv)
+                else:
+                    v["vector_score_norm"] = 1.0
+        else:
+            for v in all_hits.values():
+                v["vector_score_norm"] = 0.0
+
+        for v in all_hits.values():
+            v["hybrid_score"] = alpha * v["vector_score_norm"] + (1 - alpha) * v.get("bm25_score", 0.0)
+            if not v.get("citation"):
+                src = v.get("source")
+                ci = v.get("chunk_index")
+                v["citation"] = f"{src}#chunk{ci}" if src and ci is not None else None
+
+        results = sorted(all_hits.values(), key=lambda x: x["hybrid_score"], reverse=True)[:top_k]
+        return results

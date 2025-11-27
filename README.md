@@ -648,3 +648,47 @@ Notes
 - All endpoints are protected; use -u for Basic (or JWT with Authorization header).
 
 **CogNeo — Enterprise-grade, agentic, explainable legal AI built for the modern legal practice.**
+
+---
+
+## OpenSearch Parity + One-off Load + Optional Dual-Write (Env-gated)
+
+This release adds full retrieval-shape parity for the OpenSearch adapter and a safe path to populate OpenSearch without changing how Streamlit/Gradio/FastAPI operate on Postgres/Oracle.
+
+What’s new
+- OpenSearch index mapping now includes:
+  - doc_id (long), chunk_index (integer), citation (keyword), text (text), source (keyword), format (keyword), chunk_metadata (object), vector (knn_vector)
+- OpenSearch search responses now align with DB stores (Postgres/Oracle):
+  - search_vector: returns doc_id, chunk_index, score=vector_score, bm25_score=0.0, citation, text, source, format, chunk_metadata
+  - search_bm25: returns doc_id, chunk_index, score=bm25_score, bm25_score=1.0 presence signal, citation, text, source, format, chunk_metadata
+  - search_hybrid: alpha-weighted blend of normalized vector_score and bm25 presence -> hybrid_score; includes citation and all fields expected by APIs/UI
+  - search_fts: returns doc_id, chunk_index, source, content/text, chunk_metadata, snippet=None, search_area="both"
+
+One-off, non-disruptive backfill to OpenSearch (keep app on DB)
+- Configure only OpenSearch connectivity in your .env/shell:
+  - OPENSEARCH_HOST=http(s)://host:9200
+  - OPENSEARCH_INDEX=cogneo_chunks_v2        # recommended new name if upgrading mapping
+  - OPENSEARCH_USER / OPENSEARCH_PASS        # if required
+- Run the tool (no need to switch serving backend):
+  - python tools/reindex_to_opensearch.py
+  - It reads Document + Embedding from the current DB backend (Postgres/Oracle) and writes to OpenSearch via the adapter.
+  - It passes doc_id and chunk_index to OpenSearch for retrieval parity and computes stable _id="{doc_id}#{chunk_index}".
+
+Serve from OpenSearch (optional)
+- If you want the API/UI to retrieve from OpenSearch:
+  - Set COGNEO_VECTOR_BACKEND=opensearch
+  - Keep DB vars for non-retrieval features; OpenSearch is only the retrieval layer.
+
+Optional ingestion dual-write (env-gated)
+- To also push chunks to OpenSearch during ingest while keeping the DB as system of record:
+  - COGNEO_VECTOR_DUAL_WRITE=1            # accepted truthy: 1, true, yes, os, opensearch
+  - OPENSEARCH_HOST/INDEX/USER/PASS as above
+- Behavior:
+  - The worker inserts to DB as before.
+  - It then best-effort indexes the same batch into OpenSearch (doc_id + chunk_index parity).
+  - Any OpenSearch errors are logged as warnings and DO NOT fail the ingestion job.
+
+Notes and migration tip
+- If you previously created an OpenSearch index without doc_id/chunk_index/citation, create a new index (e.g., cogneo_chunks_v2) with the new mapping and run the backfill tool.
+- Ensure COGNEO_EMBED_DIM matches your embedding model (e.g., 768).
+- For HTTPS endpoints that require CA verification/SNI, pass proper OPENSEARCH_* TLS options at your infra level; otherwise use a trusted endpoint.

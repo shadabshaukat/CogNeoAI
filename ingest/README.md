@@ -337,8 +337,89 @@ Worker (ingest/beta_worker.py)
 - --log_dir
 
 
+## OpenSearch dual‑write (env‑gated, optional)
+
+You can keep the relational DB (Postgres/Oracle) as the system of record while also mirroring ingested chunks to OpenSearch in near‑real time.
+
+Enable via .env:
+- COGNEO_VECTOR_DUAL_WRITE=1   # accepted truthy: 1, true, yes, os, opensearch
+- OPENSEARCH_HOST=http(s)://host:9200
+- OPENSEARCH_INDEX=cogneo_chunks_v2
+- OPENSEARCH_USER / OPENSEARCH_PASS (if required)
+- Ensure COGNEO_EMBED_DIM matches the embedding model (e.g., 768)
+
+Behavior:
+- The worker inserts documents + embeddings into the DB first (unchanged).
+- If dual‑write is enabled, it then best‑effort indexes the same batch into OpenSearch with parity fields (doc_id + chunk_index + citation).
+- Any OpenSearch indexing error is logged as a warning; ingestion continues without failing.
+
+Notes:
+- Create the target OpenSearch index with the updated mapping (doc_id, chunk_index, citation, text, source, format, chunk_metadata, vector).
+- For one‑off population without touching ingest, use tools/reindex_to_opensearch.py (reads from DB, writes to OpenSearch).
+
+## GPU starvation mitigation (very large workloads)
+
+If GPUs appear under‑utilized on large corpora, apply the following:
+
+Batching/model
+- Tune COGNEO_EMBED_BATCH to your VRAM:
+  - 16 GB: 64–128
+  - 24–40 GB: 128–256
+- Embedder includes adaptive backoff on OOM; start higher and let it reduce if needed.
+- Keep HF cache (HF_HOME) on fast SSD and pre‑warm the model.
+
+CPU/GPU pipeline
+- Increase CPU_WORKERS to keep the CPU stage ahead of the GPU:
+  - Default auto = min(cores‑1, 8). On 16–32 cores, try 8–12.
+  - Env: COGNEO_CPU_WORKERS=8..12
+- Increase prefetch to keep the GPU fed:
+  - COGNEO_PIPELINE_PREFETCH=128 or 256 for very large runs.
+- Ensure per‑worker size‑desc ordering is on (default):
+  - COGNEO_SORT_WORKER_FILES=1
+
+Sharding/orchestration
+- Use dynamic sharding with size balancing to reduce tail latency:
+  - Orchestrator flags: --shards GPUs*16 --balance_by_size
+- On very skewed corpora (few huge files), consider even more shards (e.g., GPUs*32) to keep all GPUs busy.
+
+Chunking settings
+- Larger semantic chunks reduce embedding calls:
+  - target_tokens=1500, overlap_tokens=192, max_tokens=1920 (as in docs)
+- If chunking stalls:
+  - Increase COGNEO_TIMEOUT_CHUNK moderately (e.g., 120–180)
+  - Keep optional RCTS fallback off unless required (COGNEO_USE_RCTS_GENERIC=0)
+
+I/O and environment
+- Place dataset and HF cache on fast local SSD.
+- Keep NUMEXPR/MKL/OPENBLAS/OMP threads low (already defaulted in .env) to reduce CPU contention.
+- Monitor with:
+  - nvidia-smi dmon, iostat, vmstat, and per‑process CPU to detect CPU bottlenecks.
+
+Recommended preset (example)
+```bash
+# .env (example for 24–40GB VRAM systems)
+COGNEO_CPU_WORKERS=10
+COGNEO_PIPELINE_PREFETCH=256
+COGNEO_EMBED_BATCH=192
+COGNEO_TIMEOUT_CHUNK=120
+# Optional dual‑write (best‑effort)
+# COGNEO_VECTOR_DUAL_WRITE=1
+```
+Orchestrator:
+```bash
+python3 -m ingest.beta_orchestrator \
+  --root "/data/corpus" \
+  --session "beta-large-$(date +%Y%m%d-%H%M%S)" \
+  --gpus 4 --shards 64 --balance_by_size \
+  --model "nomic-ai/nomic-embed-text-v1.5" \
+  --target_tokens 1500 --overlap_tokens 192 --max_tokens 1920 \
+  --log_dir "/var/log/cogneo"
+```
+
 ## References
 
 - docs/BetaDataLoad.md — comprehensive Beta Data Load Guide
-- tools/bench_sql_latency.py — end-to-end SQL latency benchmark
-- schema-post-load/README.md — HNSW/IVFFLAT, generated/expression columns, and TB-scale guidance
+- tools/bench_sql_latency.py — end‑to‑end SQL latency benchmark
+- schema-post-load/README.md — HNSW/IVFFLAT, generated/expression columns, and TB‑scale guidance
+- storage/adapters/README.md — adapter parity (Postgres | Oracle | OpenSearch), dual‑write, backfill
+- tools/README.md — tools index incl. OpenSearch backfill and troubleshooting

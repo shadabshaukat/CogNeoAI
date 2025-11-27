@@ -168,18 +168,21 @@ def _batch_insert_chunks(
     chunks: List[Dict[str, Any]],
     vectors,
     source_path: str,
-    fmt: str
-) -> int:
+    fmt: str,
+    return_ids: bool = False
+):
     """
     Insert a batch of chunks and matching vectors into the database as
-    Document and Embedding rows. Returns inserted count.
+    Document and Embedding rows.
+    Returns inserted count (int) by default; when return_ids=True returns (inserted_count, doc_ids).
     """
     if not chunks:
-        return 0
+        return 0 if not return_ids else (0, [])
     if vectors is None or len(vectors) != len(chunks):
         raise ValueError("Vector batch does not match number of chunks")
 
     inserted = 0
+    doc_ids: List[int] = []
     for idx, chunk in enumerate(chunks):
         text = chunk.get("text", "")
         cm = chunk.get("chunk_metadata") or {}
@@ -195,6 +198,7 @@ def _batch_insert_chunks(
         )
         session.add(doc)
         session.flush()  # assign id
+        doc_ids.append(int(getattr(doc, "id")))
         emb = Embedding(
             doc_id=doc.id,
             chunk_index=idx,
@@ -204,7 +208,7 @@ def _batch_insert_chunks(
         session.add(emb)
         inserted += 1
     session.commit()
-    return inserted
+    return (inserted, doc_ids) if return_ids else inserted
 
 
 def _append_log_line(log_dir: str, session_name: str, file_path: str, success: bool) -> None:
@@ -427,13 +431,43 @@ def _db_insert_with_retry(
     while True:
         try:
             with _deadline(INSERT_TIMEOUT):
-                return _batch_insert_chunks(
-                    session=session,
-                    chunks=chunks,
-                    vectors=vectors,
-                    source_path=source_path,
-                    fmt=fmt,
+                # Optional dual-write to OpenSearch, controlled by env:
+                # COGNEO_VECTOR_DUAL_WRITE in {"1","true","yes","os","opensearch"} enables it.
+                dual = os.environ.get("COGNEO_VECTOR_DUAL_WRITE", "0").strip().lower() in (
+                    "1", "true", "yes", "os", "opensearch"
                 )
+                if dual:
+                    inserted, doc_ids = _batch_insert_chunks(
+                        session=session,
+                        chunks=chunks,
+                        vectors=vectors,
+                        source_path=source_path,
+                        fmt=fmt,
+                        return_ids=True
+                    )
+                    try:
+                        from storage.adapters.opensearch import OpenSearchAdapter  # lazy import
+                        adapter = OpenSearchAdapter()
+                        os_chunks: List[Dict[str, Any]] = []
+                        for idx, ch in enumerate(chunks):
+                            os_chunks.append({
+                                "doc_id": doc_ids[idx] if idx < len(doc_ids) else None,
+                                "chunk_index": idx,
+                                "text": ch.get("text", ""),
+                                "chunk_metadata": ch.get("chunk_metadata") or {}
+                            })
+                        adapter.index_chunks(os_chunks, vectors, source_path, fmt)
+                    except Exception as oe:
+                        print(f"[beta_worker] WARN: dual-write to OpenSearch failed: {oe}", flush=True)
+                    return inserted
+                else:
+                    return _batch_insert_chunks(
+                        session=session,
+                        chunks=chunks,
+                        vectors=vectors,
+                        source_path=source_path,
+                        fmt=fmt,
+                    )
         except (OperationalError, DBAPIError) as e:
             try:
                 session.rollback()
