@@ -454,11 +454,14 @@ class OpenSearchAdapter(VectorSearchAdapter):
                     err_cnt += 1
                     if first_err is None:
                         first_err = info
-            if err_cnt and self._debug:
+            if self._debug:
                 try:
-                    print(f"[OpenSearchAdapter] parallel_bulk finished ok={ok_cnt} err={err_cnt}; first_err={first_err}")
+                    if err_cnt:
+                        print(f"[OpenSearchAdapter] parallel_bulk finished ok_docs={ok_cnt} err_docs={err_cnt}; first_err={first_err}")
+                    else:
+                        print(f"[OpenSearchAdapter] parallel_bulk finished ok_docs={ok_cnt} err_docs={err_cnt}")
                 except Exception:
-                    print(f"[OpenSearchAdapter] parallel_bulk finished ok={ok_cnt} err={err_cnt}")
+                    pass
         else:
             # Bulk with stats so we can see failures without raising
             try:
@@ -473,7 +476,7 @@ class OpenSearchAdapter(VectorSearchAdapter):
                     raise_on_error=False,
                     raise_on_exception=False,
                 )
-                if failed and self._debug:
+                if self._debug:
                     print(f"[OpenSearchAdapter] bulk finished succ={succ} failed={failed}")
             except Exception as e:
                 # Ensure we surface the failure reason in debug mode

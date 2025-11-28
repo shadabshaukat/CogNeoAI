@@ -98,7 +98,27 @@ def main(batch_size: int = 500) -> None:
             except Exception as es:
                 print(f"[reindex] Note: could not read index settings: {es}")
     except Exception as e:
-        print(f"[WARN] OpenSearch index ensure failed: {e}")
+        # Abort rather than continuing to bulk index, otherwise auto_create_index can silently create a 1-shard index,
+        # leading to very slow ingestion and parity issues.
+        print(f"[ERROR] OpenSearch index ensure failed, aborting reindex to avoid 1-shard auto-create: {e}")
+        sys.exit(1)
+
+    # Verify index exists and shard count before proceeding to avoid slow single-shard auto-create scenarios
+    try:
+        if not adapter.client.indices.exists(index=adapter.index):
+            print(f"[reindex] ERROR: index '{adapter.index}' does not exist after ensure step. Aborting.")
+            sys.exit(1)
+        s = adapter.client.indices.get_settings(index=adapter.index)
+        idx = list(s.keys())[0] if isinstance(s, dict) and s else adapter.index
+        settings = s.get(idx, {}).get("settings", {}).get("index", {}) or {}
+        effective_shards = int(str(settings.get("number_of_shards") or "1"))
+        want_shards = int(os.environ.get("OPENSEARCH_NUMBER_OF_SHARDS", "0") or "0")
+        if want_shards and effective_shards != want_shards:
+            print(f"[reindex] ERROR: effective shards={effective_shards}, wanted={want_shards}. Aborting to avoid slow ingestion.")
+            print("[reindex] Hint: set OPENSEARCH_FORCE_RECREATE=1 and rerun, or choose a new OPENSEARCH_INDEX.")
+            sys.exit(1)
+    except Exception as ei:
+        print(f"[reindex] WARN: could not validate index existence/shards: {ei}")
 
     total = 0
     with SessionLocal() as s:
@@ -135,8 +155,10 @@ def main(batch_size: int = 500) -> None:
             nonlocal total, cur_chunks, cur_vecs, cur_src, cur_fmt, cur_doc_id
             if cur_chunks:
                 try:
+                    sz = len(cur_chunks)
                     adapter.index_chunks(cur_chunks, cur_vecs, cur_src or "unknown", cur_fmt or "txt")
-                    total += len(cur_chunks)
+                    total += sz
+                    print(f"[reindex] flushed batch size={sz} total_indexed={total}")
                 except Exception as e:
                     print(f"[WARN] Indexing batch failed: {e}")
                 finally:
