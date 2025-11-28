@@ -639,7 +639,7 @@ CSS = """
   to {transform: rotate(360deg);}
 }
 """
-with gr.Blocks(title="CogNeo RAG UI", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="CogNeo RAG UI") as demo:
     gr.HTML(f"<style>{CSS}</style>")
     gr.Markdown("# CogNeo RAG Platform")
 

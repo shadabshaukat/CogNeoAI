@@ -28,3 +28,8 @@ opensearch-py
 boto3
 PyJWT
 starlette-exporter
+pdfminer.six
+pytesseract
+pdf2image
+pymupdf
+pillow
