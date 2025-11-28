@@ -456,11 +456,17 @@ def _db_insert_with_retry(
                         adapter = _OS_ADAPTER
                         os_chunks: List[Dict[str, Any]] = []
                         for idx, ch in enumerate(chunks):
+                            cm = ch.get("chunk_metadata") or {}
+                            if isinstance(cm, str):
+                                try:
+                                    cm = json.loads(cm)
+                                except Exception:
+                                    cm = {}
                             os_chunks.append({
                                 "doc_id": doc_ids[idx] if idx < len(doc_ids) else None,
                                 "chunk_index": idx,
                                 "text": ch.get("text", ""),
-                                "chunk_metadata": ch.get("chunk_metadata") or {}
+                                "chunk_metadata": cm
                             })
                         if adapter:
                             adapter.index_chunks(os_chunks, vectors, source_path, fmt)

@@ -59,10 +59,35 @@ class OpenSearchAdapter(VectorSearchAdapter):
     def create_all_tables(self) -> None:
         """
         Ensure the OpenSearch index exists with a knn_vector mapping.
+        - Shard count in OpenSearch is immutable after index creation.
+          If you need to change shards, either:
+            * use a new OPENSEARCH_INDEX name, or
+            * set OPENSEARCH_FORCE_RECREATE=1 to delete and recreate (DANGEROUS: drops existing index).
         """
         try:
-            if self.client.indices.exists(index=self.index):
-                return
+            exists = self.client.indices.exists(index=self.index)
+            if exists:
+                force_recreate = str(os.environ.get("OPENSEARCH_FORCE_RECREATE", "0")).strip().lower() in ("1", "true", "yes", "y", "on")
+                if force_recreate:
+                    if self._debug:
+                        print(f"[OpenSearchAdapter] OPENSEARCH_FORCE_RECREATE=1 -> deleting existing index {self.index}")
+                    try:
+                        self.client.indices.delete(index=self.index, ignore=[404])
+                    except Exception as e_del:
+                        print(f"[OpenSearchAdapter] WARN: failed to delete index {self.index}: {e_del}")
+                else:
+                    # Log current settings for visibility and explain shard immutability
+                    if self._debug:
+                        try:
+                            s = self.client.indices.get_settings(index=self.index)
+                            idx = list(s.keys())[0] if isinstance(s, dict) and s else self.index
+                            settings = s.get(idx, {}).get("settings", {}).get("index", {}) or {}
+                            nsh = settings.get("number_of_shards")
+                            nrepl = settings.get("number_of_replicas")
+                            print(f"[OpenSearchAdapter] index '{self.index}' exists; number_of_shards={nsh}, number_of_replicas={nrepl}. Shards are immutable after creation. To change shards, set OPENSEARCH_FORCE_RECREATE=1 or use a new OPENSEARCH_INDEX.")
+                        except Exception:
+                            print(f"[OpenSearchAdapter] index '{self.index}' exists. Shards are immutable; use OPENSEARCH_FORCE_RECREATE=1 to recreate with new shard count.")
+                    return
         except Exception:
             # For OS < 2.5 the API may differ; ignore existence check errors and attempt create
             pass
@@ -81,7 +106,7 @@ class OpenSearchAdapter(VectorSearchAdapter):
                     "text": {"type": "text"},
                     "source": {"type": "keyword"},
                     "format": {"type": "keyword"},
-                    "chunk_metadata": {"type": "object", "enabled": True},
+                    "chunk_metadata": {"type": "flattened"},
                     "vector": {
                         "type": "knn_vector",
                         "dimension": self.dim,
@@ -109,6 +134,12 @@ class OpenSearchAdapter(VectorSearchAdapter):
         if replicas:
             try:
                 body["settings"]["index"]["number_of_replicas"] = int(replicas)
+            except Exception:
+                pass
+        if self._debug:
+            try:
+                sdict = body.get("settings", {}).get("index", {}) if isinstance(body, dict) else {}
+                print(f"[OpenSearchAdapter] creating index '{self.index}' with settings: shards={sdict.get('number_of_shards','(default)')}, replicas={sdict.get('number_of_replicas','(default)')}")
             except Exception:
                 pass
         self.client.indices.create(index=self.index, body=body, ignore=400)
@@ -337,7 +368,7 @@ class OpenSearchAdapter(VectorSearchAdapter):
         q_meta = {
             "query_string": {
                 "query": query,
-                "fields": ["chunk_metadata.*"],
+                "fields": ["chunk_metadata", "chunk_metadata.*"],
                 "lenient": True,
                 "default_operator": "AND"
             }
