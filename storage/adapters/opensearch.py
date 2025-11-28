@@ -6,18 +6,23 @@ from storage.interfaces import VectorSearchAdapter
 
 
 def _os_client() -> OpenSearch:
-    host = os.environ.get("OPENSEARCH_HOST", "https://localhost:9200")
+    host = (os.environ.get("OPENSEARCH_HOST", "https://localhost:9200") or "").rstrip("/")
     user = os.environ.get("OPENSEARCH_USER")
     pwd = os.environ.get("OPENSEARCH_PASS")
-    if user and pwd:
-        return OpenSearch(hosts=[host], http_auth=(user, pwd), verify_certs=True)
-    return OpenSearch(hosts=[host], verify_certs=True)
+    verify = os.environ.get("OPENSEARCH_VERIFY_CERTS", "1") != "0"
+    timeout = int(os.environ.get("OPENSEARCH_TIMEOUT", "20"))
+    max_retries = int(os.environ.get("OPENSEARCH_MAX_RETRIES", "2"))
 
-    """
-    For OCI OpenSearch set verify_certs=True
-    For all HTTPS enabled services set verify_certs=True
-    For HTTP service set verify_certs=False
-    """
+    kwargs = dict(
+        hosts=[host],
+        verify_certs=verify,
+        timeout=timeout,
+        max_retries=max_retries,
+        retry_on_timeout=True,
+    )
+    if user and pwd:
+        kwargs["http_auth"] = (user, pwd)
+    return OpenSearch(**kwargs)
 
 
 def _index_name() -> str:
@@ -44,6 +49,12 @@ class OpenSearchAdapter(VectorSearchAdapter):
         self.client = _os_client()
         self.index = _index_name()
         self.dim = _dim()
+        self.timeout = int(os.environ.get("OPENSEARCH_TIMEOUT", "20"))
+        self._debug = os.environ.get("OPENSEARCH_DEBUG", "0") == "1"
+        if self._debug:
+            host_env = (os.environ.get("OPENSEARCH_HOST", "") or "").rstrip("/")
+            verify_env = os.environ.get("OPENSEARCH_VERIFY_CERTS", "1") != "0"
+            print(f"[OpenSearchAdapter] host={host_env} index={self.index} timeout={self.timeout}s verify_certs={verify_env}")
 
     def create_all_tables(self) -> None:
         """
@@ -147,7 +158,7 @@ class OpenSearchAdapter(VectorSearchAdapter):
 
         if not actions:
             return 0
-        helpers.bulk(self.client, actions, refresh=False)
+        helpers.bulk(self.client, actions, refresh=False, request_timeout=self.timeout)
         return len(actions)
 
     def search_vector(self, query_vec, top_k: int = 5) -> List[Dict[str, Any]]:
@@ -235,7 +246,12 @@ class OpenSearchAdapter(VectorSearchAdapter):
             "query": {"match": {"text": {"query": query}}},
             "_source": True
         }
-        res = self.client.search(index=self.index, body=body)
+        try:
+            res = self.client.search(index=self.index, body=body, request_timeout=self.timeout)
+        except Exception as e:
+            if self._debug:
+                print(f"[OpenSearchAdapter] BM25 search error on index={self.index}: {e}")
+            return []
         out = []
         for h in res.get("hits", {}).get("hits", []):
             s = h.get("_source", {})
@@ -270,7 +286,12 @@ class OpenSearchAdapter(VectorSearchAdapter):
             },
             "_source": True
         }
-        res = self.client.search(index=self.index, body=body)
+        try:
+            res = self.client.search(index=self.index, body=body, request_timeout=self.timeout)
+        except Exception as e:
+            if self._debug:
+                print(f"[OpenSearchAdapter] FTS search error on index={self.index}: {e}")
+            return []
         out = []
         for h in res.get("hits", {}).get("hits", []):
             s = h.get("_source", {})
