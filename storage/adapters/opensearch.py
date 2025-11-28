@@ -207,6 +207,13 @@ class OpenSearchAdapter(VectorSearchAdapter):
             except Exception as _ce:
                 print(f"[OpenSearchAdapter] cluster settings diagnostics failed: {_ce}")
 
+        # k-NN engine/method/space selectable via env; default to lucene for OpenSearch >= 3.0
+        knn_engine = (os.environ.get("OPENSEARCH_KNN_ENGINE", "lucene") or "lucene").lower()
+        if knn_engine not in ("lucene", "faiss", "nmslib"):
+            knn_engine = "lucene"
+        knn_space = (os.environ.get("OPENSEARCH_KNN_SPACE", "cosinesimil") or "cosinesimil").lower()
+        knn_method = os.environ.get("OPENSEARCH_KNN_METHOD", "hnsw") or "hnsw"
+
         body = {
             "settings": {
                 "index": {
@@ -227,9 +234,9 @@ class OpenSearchAdapter(VectorSearchAdapter):
                         "type": "knn_vector",
                         "dimension": self.dim,
                         "method": {
-                            "name": "hnsw",
-                            "space_type": "cosinesimil",
-                            "engine": "nmslib",
+                            "name": knn_method,
+                            "space_type": knn_space,
+                            "engine": knn_engine,
                             "parameters": {
                                 "ef_construction": 200,
                                 "m": 16
