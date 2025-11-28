@@ -31,11 +31,11 @@ if "user" not in st.session_state:
 st.set_page_config(page_title="CogNeo Chat", layout="wide")
 
 API_ROOT = os.environ.get("COGNEO_API_URL", "http://localhost:8000")
-AUTH_TUPLE = (os.environ.get("FASTAPI_API_USER", "legal_api"), os.environ.get("FASTAPI_API_PASS", "letmein"))
+AUTH_TUPLE = (os.environ.get("FASTAPI_API_USER", "cogneo_api"), os.environ.get("FASTAPI_API_PASS", "letmein"))
 
-LEGAL_SYSTEM_PROMPT = """You are an expert Australian legal research and compliance AI assistant.
-Answer strictly from the provided sources and context. Always cite the source section/citation for every statement. If you do not know the answer from the context, reply: "Not found in the provided legal documents."
-When summarizing, be neutral and factual. Never invent legal advice."""
+SYSTEM_PROMPT = """You are an expert research and compliance AI assistant.
+Answer strictly from the provided sources and context. Always cite the source section/citation for every statement. If you do not know the answer from the context, reply: "Not found in the provided documents."
+When summarizing, be neutral and factual. Never invent advice."""
 
 # State init
 if "chat_msgs" not in st.session_state:
@@ -179,7 +179,7 @@ def save_current_session_snapshot():
             "max_tokens": int(st.session_state.get("llm_max_tokens", 1024)),
             "repeat_penalty": float(st.session_state.get("llm_repeat_penalty", 1.1)),
             "top_k": int(st.session_state.get("chat_top_k", 10)),
-            "custom_prompt": LEGAL_SYSTEM_PROMPT,
+            "custom_prompt": SYSTEM_PROMPT,
         }
         save_chat_session(
             chat_history=msgs,
@@ -343,7 +343,7 @@ for m in st.session_state["chat_msgs"]:
                         st.markdown(f"{i}. {c}")
 
 # Chat input
-user_msg = st.chat_input("Ask your legal question (citations required)…")
+user_msg = st.chat_input("Ask a question (citations required)…")
 if user_msg:
     # Append user turn
     st.session_state["chat_msgs"].append({"role": "user", "content": user_msg})
@@ -373,7 +373,7 @@ if user_msg:
 
     # Compose history-augmented prompt
     history_txt = build_history_prompt(max_turns=10)
-    custom_prompt = LEGAL_SYSTEM_PROMPT + ("\n\nChat History:\n" + history_txt if history_txt else "")
+    custom_prompt = SYSTEM_PROMPT + ("\n\nChat History:\n" + history_txt if history_txt else "")
 
     # Assistant response area (stream for Ollama; others as full text)
     with st.chat_message("assistant"):
@@ -392,7 +392,7 @@ if user_msg:
                         "question": user_msg,
                         "context_chunks": context_chunks or [],
                         "chunk_metadata": chunk_metadata or [],
-                        "custom_prompt": LEGAL_SYSTEM_PROMPT,
+                        "custom_prompt": SYSTEM_PROMPT,
                         "temperature": float(st.session_state["llm_temperature"]),
                         "top_p": float(st.session_state["llm_top_p"]),
                         "max_tokens": int(st.session_state["llm_max_tokens"]),

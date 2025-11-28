@@ -8,7 +8,7 @@ Key modules
 - Scanner (sample mode): ingest/beta_scanner.py
 - Semantic chunker: ingest/semantic_chunker.py
 - Loaders (txt/html): ingest/loader.py
-- HTML utility (used by loader): legal_html2text.py
+- HTML utility (used by loader): html2text_utils.py
 - Embeddings: embedding/embedder.py
 - Database: db/connector.py, db/store.py
 - Reference doc: docs/BetaDataLoad.md (end-to-end guide)

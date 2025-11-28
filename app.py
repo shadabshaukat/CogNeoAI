@@ -1,7 +1,7 @@
 """
 CogNeo AI – Main App Page (ENHANCED: rich metadata chunk display)
 - Sidebar batch convert with 'Start' button
-- Legal hybrid search, ingestion, RAG, all chunk context returns rich metadata
+- Hybrid search, ingestion, RAG, all chunk context returns rich metadata
 """
 
 import streamlit as st
@@ -26,7 +26,7 @@ import time
 import re
 import traceback
 
-import legal_html2text
+import html2text_utils
 
 st.set_page_config(page_title="CogNeo AI", layout="wide")
 st.title("CogNeo AI – Document Search, Background Embedding & RAG")
@@ -72,9 +72,9 @@ if "run_session_type" not in st.session_state:
 if "html2txt_run" not in st.session_state:
     st.session_state["html2txt_run"] = False
 
-LEGAL_SYSTEM_PROMPT = """You are an expert Australian legal research and compliance AI assistant.
-Answer strictly from the provided sources and context. Always cite the source section/citation for every statement. If you do not know the answer from the context, reply: "Not found in the provided legal documents."
-When summarizing, be neutral and factual. Never invent legal advice."""
+SYSTEM_PROMPT = """You are an expert research and compliance AI assistant.
+Answer strictly from the provided sources and context. Always cite the source section/citation for every statement. If you do not know the answer from the context, reply: "Not found in the provided documents."
+When summarizing, be neutral and factual. Never invent advice."""
 
 EMBEDDING_MODELS = [
     "nomic-ai/nomic-embed-text-v1.5",
@@ -109,8 +109,8 @@ else:
 st.markdown("### Custom System Prompt")
 user_system_prompt = st.text_area(
     "System Prompt",
-    value=LEGAL_SYSTEM_PROMPT,
-    help="Set a custom prompt for the legal assistant. This guides legal compliance output."
+    value=SYSTEM_PROMPT,
+    help="Set a custom prompt for the assistant. This guides compliance output."
 )
 
 # --- Account / Logout ---
@@ -156,7 +156,7 @@ if st.session_state.get("html2txt_run"):
     conversion_status = st.empty()
     def write_status(msg):
         conversion_status.write(msg)
-    legal_html2text.streamlit_conversion_runner(
+    html2text_utils.streamlit_conversion_runner(
         html2txt_vals["input_dir"],
         html2txt_vals["output_dir"],
         html2txt_vals["session_name"],
@@ -357,7 +357,7 @@ if llm_source_rag == "AWS Bedrock":
     try:
         resp_models = requests.get(
             f"{API_ROOT}/models/bedrock?include_current=true",
-            auth=(os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein")),
+            auth=(os.environ.get("FASTAPI_API_USER","cogneo_api"), os.environ.get("FASTAPI_API_PASS","letmein")),
             timeout=20
         )
         data = resp_models.json() if resp_models.ok else {}
@@ -412,7 +412,7 @@ if st.button("Hybrid Search & RAG", disabled=disable_rag_btn):
     st.write("🔎 Performing hybrid search and running RAG LLM...")
     try:
         resp = requests.post(f"{API_ROOT}/search/hybrid", json={"query": query, "top_k": top_k, "alpha": alpha}, timeout=30,
-            auth=(os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein")))
+            auth=(os.environ.get("FASTAPI_API_USER","cogneo_api"), os.environ.get("FASTAPI_API_PASS","letmein")))
         resp.raise_for_status()
         hits = resp.json()
     except Exception as e:
@@ -438,7 +438,7 @@ if st.button("Hybrid Search & RAG", disabled=disable_rag_btn):
         with st.spinner(f"Calling {llm_source_rag}..."):
             answer = ""
             try:
-                auth_tuple = (os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein"))
+                auth_tuple = (os.environ.get("FASTAPI_API_USER","cogneo_api"), os.environ.get("FASTAPI_API_PASS","letmein"))
                 if llm_source_rag == "Local Ollama":
                     payload = {
                         "question": query,
@@ -543,7 +543,7 @@ if chat_llm_source == "AWS Bedrock":
     try:
         resp_models = requests.get(
             f"{API_ROOT}/models/bedrock?include_current=true",
-            auth=(os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein")),
+            auth=(os.environ.get("FASTAPI_API_USER","cogneo_api"), os.environ.get("FASTAPI_API_PASS","letmein")),
             timeout=20
         )
         data = resp_models.json() if resp_models.ok else {}
@@ -608,7 +608,7 @@ if user_msg:
         r_ctx = requests.post(
             f"{API_ROOT}/search/hybrid",
             json={"query": user_msg, "top_k": 10, "alpha": 0.5},
-            auth=(os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein")),
+            auth=(os.environ.get("FASTAPI_API_USER","cogneo_api"), os.environ.get("FASTAPI_API_PASS","letmein")),
             timeout=30
         )
         r_ctx.raise_for_status()
@@ -621,7 +621,7 @@ if user_msg:
     # Answer using selected LLM source
     with st.chat_message("assistant"):
         placeholder = st.empty()
-        auth_tuple = (os.environ.get("FASTAPI_API_USER","legal_api"), os.environ.get("FASTAPI_API_PASS","letmein"))
+        auth_tuple = (os.environ.get("FASTAPI_API_USER","cogneo_api"), os.environ.get("FASTAPI_API_PASS","letmein"))
         if chat_llm_source == "Local Ollama":
             acc = ""
             try:
@@ -633,7 +633,7 @@ if user_msg:
                     "question": user_msg,
                     "context_chunks": context_chunks or [],
                     "chunk_metadata": chunk_metadata or [],
-                    "custom_prompt": LEGAL_SYSTEM_PROMPT,
+                    "custom_prompt": SYSTEM_PROMPT,
                     "temperature": 0.1,
                     "top_p": 0.9,
                     "max_tokens": 1024,
@@ -663,7 +663,7 @@ if user_msg:
                     "context_chunks": context_chunks or [],
                     "sources": [],
                     "chunk_metadata": chunk_metadata or [],
-                    "custom_prompt": LEGAL_SYSTEM_PROMPT,
+                    "custom_prompt": SYSTEM_PROMPT,
                     "temperature": 0.1,
                     "top_p": 0.9,
                     "max_tokens": 1024,
@@ -687,7 +687,7 @@ if user_msg:
                     "context_chunks": context_chunks or [],
                     "sources": [],
                     "chunk_metadata": chunk_metadata or [],
-                    "custom_prompt": LEGAL_SYSTEM_PROMPT,
+                    "custom_prompt": SYSTEM_PROMPT,
                     "temperature": 0.1,
                     "top_p": 0.9,
                     "max_tokens": 1024,

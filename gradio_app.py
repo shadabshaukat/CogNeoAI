@@ -639,14 +639,14 @@ CSS = """
   to {transform: rotate(360deg);}
 }
 """
-with gr.Blocks(title="CogNeo RAG UI") as demo:
+with gr.Blocks(title="CogNeo RAG UI", theme=gr.themes.Soft()) as demo:
     gr.HTML(f"<style>{CSS}</style>")
     gr.Markdown("# CogNeo RAG Platform")
 
     login_box = gr.Row(visible=True)
     with login_box:
         gr.Markdown("## Login to continue")
-        username = gr.Textbox(label="Username", value="legal_api")
+        username = gr.Textbox(label="Username", value="cogneo_api")
         password = gr.Textbox(label="Password", type="password")
         login_err = gr.Markdown("")
         login_btn = gr.Button("Login")

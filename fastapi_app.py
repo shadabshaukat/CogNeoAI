@@ -165,14 +165,14 @@ class TokenReq(BaseModel):
 
 @app.post("/auth/token", tags=["auth"])
 def auth_token(req: TokenReq):
-    api_user = os.environ.get("FASTAPI_API_USER", "legal_api")
+    api_user = os.environ.get("FASTAPI_API_USER", "cogneo_api")
     api_pass = os.environ.get("FASTAPI_API_PASS", "letmein")
     if not (secrets.compare_digest(req.username, api_user) and secrets.compare_digest(req.password, api_pass)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     return {"access_token": _issue_token(req.username), "token_type": "bearer", "expires_in": JWT_EXPIRE_MIN * 60}
 
 def _basic_user(credentials: HTTPBasicCredentials = Depends(security)):
-    api_user = os.environ.get("FASTAPI_API_USER", "legal_api")
+    api_user = os.environ.get("FASTAPI_API_USER", "cogneo_api")
     api_pass = os.environ.get("FASTAPI_API_PASS", "letmein")
     correct_username = secrets.compare_digest(credentials.username, api_user)
     correct_password = secrets.compare_digest(credentials.password, api_pass)
