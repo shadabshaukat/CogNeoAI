@@ -18,6 +18,7 @@ Notes:
 """
 
 import ast
+import json
 import os
 import sys
 from typing import Any, Dict, List, Tuple
@@ -26,6 +27,13 @@ from typing import Any, Dict, List, Tuple
 _sys_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _sys_root not in sys.path:
     sys.path.insert(0, _sys_root)
+
+# Auto-load .env so OPENSEARCH_NUMBER_OF_SHARDS/REPLICAS and other settings are respected
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except Exception:
+    pass
 
 from storage.adapters.opensearch import OpenSearchAdapter
 from db.store import SessionLocal
@@ -78,6 +86,17 @@ def main(batch_size: int = 500) -> None:
     adapter = OpenSearchAdapter()
     try:
         adapter.create_all_tables()
+        # Print effective shard/replica settings for visibility (requires appropriate privileges)
+        if os.environ.get("OPENSEARCH_DEBUG", "0") == "1":
+            try:
+                s = adapter.client.indices.get_settings(index=adapter.index)
+                idx = list(s.keys())[0] if isinstance(s, dict) and s else adapter.index
+                settings = s.get(idx, {}).get("settings", {}).get("index", {}) or {}
+                nsh = settings.get("number_of_shards")
+                nrepl = settings.get("number_of_replicas")
+                print(f"[reindex] Index '{adapter.index}' settings: number_of_shards={nsh}, number_of_replicas={nrepl}")
+            except Exception as es:
+                print(f"[reindex] Note: could not read index settings: {es}")
     except Exception as e:
         print(f"[WARN] OpenSearch index ensure failed: {e}")
 
@@ -137,11 +156,27 @@ def main(batch_size: int = 500) -> None:
                 cur_fmt = doc.format if getattr(doc, "format", None) else "txt"
 
             # Build chunk document including identifiers for parity
+            cm = emb.chunk_metadata
+            if isinstance(cm, str):
+                try:
+                    cm = json.loads(cm)
+                except Exception:
+                    cm = {}
+            elif cm is None:
+                cm = {}
+            elif not isinstance(cm, dict):
+                # Fallback: ensure dict to comply with OpenSearch 'flattened' mapping
+                try:
+                    cm = json.loads(str(cm))
+                    if not isinstance(cm, dict):
+                        cm = {}
+                except Exception:
+                    cm = {}
             cur_chunks.append({
                 "doc_id": emb.doc_id,
                 "chunk_index": emb.chunk_index,
                 "text": doc.content,
-                "chunk_metadata": emb.chunk_metadata if isinstance(emb.chunk_metadata, dict) else None,
+                "chunk_metadata": cm,
             })
             cur_vecs.append(_to_float_list(emb.vector))
 

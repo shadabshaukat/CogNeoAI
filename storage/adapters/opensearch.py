@@ -51,10 +51,24 @@ class OpenSearchAdapter(VectorSearchAdapter):
         self.dim = _dim()
         self.timeout = int(os.environ.get("OPENSEARCH_TIMEOUT", "20"))
         self._debug = os.environ.get("OPENSEARCH_DEBUG", "0") == "1"
+        self._primary_shards = None  # cached primary shard count for effective concurrency
         if self._debug:
             host_env = (os.environ.get("OPENSEARCH_HOST", "") or "").rstrip("/")
             verify_env = os.environ.get("OPENSEARCH_VERIFY_CERTS", "1") != "0"
             print(f"[OpenSearchAdapter] host={host_env} index={self.index} timeout={self.timeout}s verify_certs={verify_env}")
+
+    def _get_primary_shard_count(self) -> int:
+        try:
+            if self._primary_shards is not None:
+                return int(self._primary_shards)
+            s = self.client.indices.get_settings(index=self.index)
+            idx = list(s.keys())[0] if isinstance(s, dict) and s else self.index
+            settings = s.get(idx, {}).get("settings", {}).get("index", {}) or {}
+            nsh = int(str(settings.get("number_of_shards")))
+            self._primary_shards = nsh
+            return nsh if nsh > 0 else 1
+        except Exception:
+            return 1
 
     def create_all_tables(self) -> None:
         """
@@ -92,6 +106,66 @@ class OpenSearchAdapter(VectorSearchAdapter):
             # For OS < 2.5 the API may differ; ignore existence check errors and attempt create
             pass
 
+        # Diagnostics: list index templates that may affect shard/replica counts
+        if self._debug:
+            try:
+                # Composable templates (v2)
+                tmpl = self.client.transport.perform_request("GET", "/_index_template")
+                matched = []
+                if isinstance(tmpl, dict) and "index_templates" in tmpl:
+                    import fnmatch
+                    for t in tmpl.get("index_templates", []):
+                        it = t.get("index_template") or {}
+                        patterns = it.get("index_patterns") or it.get("pattern_list") or []
+                        for pat in patterns:
+                            if fnmatch.fnmatch(self.index, pat):
+                                settings = (((it.get("template") or {}).get("settings") or {}).get("index") or {})
+                                matched.append((t.get("name"), pat, settings.get("number_of_shards"), settings.get("number_of_replicas")))
+                # Legacy templates (v1)
+                try:
+                    legacy = self.client.transport.perform_request("GET", "/_template")
+                    if isinstance(legacy, dict):
+                        import fnmatch
+                        for name, spec in legacy.items():
+                            patterns = spec.get("index_patterns") or spec.get("template") or [name]
+                            if isinstance(patterns, str):
+                                patterns = [patterns]
+                            for pat in patterns:
+                                if fnmatch.fnmatch(self.index, pat):
+                                    settings = ((spec.get("settings") or {}).get("index") or {})
+                                    matched.append((name, pat, settings.get("number_of_shards"), settings.get("number_of_replicas")))
+                except Exception:
+                    pass
+                if matched:
+                    print(f"[OpenSearchAdapter] templates matching '{self.index}': " + ", ".join([f"{n}({p}) shards={s} repl={r}" for (n,p,s,r) in matched]))
+            except Exception as _te:
+                print(f"[OpenSearchAdapter] template diagnostics failed: {_te}")
+
+        # Cluster defaults diagnostics
+        if self._debug:
+            try:
+                cfg = self.client.transport.perform_request("GET", "/_cluster/settings", params={"include_defaults": "true"})
+                def _pluck(dct, *keys):
+                    cur = dct or {}
+                    for k in keys:
+                        cur = (cur.get(k) if isinstance(cur, dict) else None) or {}
+                    return cur
+                idx_defaults = _pluck(cfg, "defaults", "index")
+                idx_transient = _pluck(cfg, "transient", "index")
+                idx_persistent = _pluck(cfg, "persistent", "index")
+                aci = None
+                try:
+                    aci = (_pluck(cfg, "transient", "action") or {}).get("auto_create_index") or (_pluck(cfg, "persistent", "action") or {}).get("auto_create_index")
+                except Exception:
+                    aci = None
+                print(f"[OpenSearchAdapter] cluster index defaults shards={idx_defaults.get('number_of_shards')} repl={idx_defaults.get('number_of_replicas')} auto_create_index={aci}")
+                if idx_transient:
+                    print(f"[OpenSearchAdapter] cluster transient index settings: {idx_transient}")
+                if idx_persistent:
+                    print(f"[OpenSearchAdapter] cluster persistent index settings: {idx_persistent}")
+            except Exception as _ce:
+                print(f"[OpenSearchAdapter] cluster settings diagnostics failed: {_ce}")
+
         body = {
             "settings": {
                 "index": {
@@ -128,12 +202,12 @@ class OpenSearchAdapter(VectorSearchAdapter):
         replicas = os.environ.get("OPENSEARCH_NUMBER_OF_REPLICAS")
         if shards:
             try:
-                body["settings"]["index"]["number_of_shards"] = int(shards)
+                body["settings"]["index"]["number_of_shards"] = str(int(shards))
             except Exception:
                 pass
         if replicas:
             try:
-                body["settings"]["index"]["number_of_replicas"] = int(replicas)
+                body["settings"]["index"]["number_of_replicas"] = str(int(replicas))
             except Exception:
                 pass
         if self._debug:
@@ -142,7 +216,41 @@ class OpenSearchAdapter(VectorSearchAdapter):
                 print(f"[OpenSearchAdapter] creating index '{self.index}' with settings: shards={sdict.get('number_of_shards','(default)')}, replicas={sdict.get('number_of_replicas','(default)')}")
             except Exception:
                 pass
-        self.client.indices.create(index=self.index, body=body, ignore=400)
+        try:
+            # Avoid ignoring errors so we don't silently fall back to auto_create_index (which would default to 1 shard).
+            resp = self.client.indices.create(
+                index=self.index,
+                body=body,
+                params={"wait_for_active_shards": "1"}
+            )
+            if self._debug:
+                try:
+                    print(f"[OpenSearchAdapter] indices.create ack={resp.get('acknowledged')} shards_ack={resp.get('shards_acknowledged')} index={resp.get('index')}")
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[OpenSearchAdapter] ERROR creating index '{self.index}': {e}")
+            raise
+        # Validate effective settings post-create; optionally enforce match
+        try:
+            s = self.client.indices.get_settings(index=self.index)
+            idx = list(s.keys())[0] if isinstance(s, dict) and s else self.index
+            settings = s.get(idx, {}).get("settings", {}).get("index", {}) or {}
+            nsh = str(settings.get("number_of_shards"))
+            nrepl = str(settings.get("number_of_replicas"))
+            try:
+                self._primary_shards = int(nsh)
+            except Exception:
+                self._primary_shards = self._primary_shards or 1
+            want_shards = str(int(shards)) if shards else None
+            want_repl = str(int(replicas)) if replicas else None
+            if self._debug:
+                print(f"[OpenSearchAdapter] created index '{self.index}' effective: number_of_shards={nsh}, number_of_replicas={nrepl}")
+            enforce = str(os.environ.get("OPENSEARCH_ENFORCE_SHARDS", "0")).strip().lower() in ("1","true","yes","on","y")
+            if enforce and ((want_shards and nsh != want_shards) or (want_repl and nrepl != want_repl)):
+                raise RuntimeError(f"Index created with unexpected shard/replica (got {nsh}/{nrepl}, wanted {want_shards}/{want_repl}). Check index templates or auto_create_index.")
+        except Exception as es:
+            print(f"[OpenSearchAdapter] WARN: could not validate index settings: {es}")
 
     def index_chunks(self, chunks: List[Dict[str, Any]], vectors, source_path: str, fmt: str) -> int:
         """
@@ -215,32 +323,68 @@ class OpenSearchAdapter(VectorSearchAdapter):
             max_chunk_bytes = 100 * 1024 * 1024
         # Optional parallel bulk concurrency for multi-shard clusters
         try:
-            concurrency = int(os.environ.get("OPENSEARCH_BULK_CONCURRENCY", "1"))
+            requested_conc = int(os.environ.get("OPENSEARCH_BULK_CONCURRENCY", "1"))
         except Exception:
-            concurrency = 1
+            requested_conc = 1
+        if requested_conc <= 0:
+            requested_conc = 1
 
-        if concurrency and concurrency > 1:
-            # Consume parallel_bulk generator of (success, info) tuples
-            # to dispatch multiple bulk requests concurrently (threaded).
-            for _ok, _info in helpers.parallel_bulk(
+        # Cap concurrency by primary shard count to avoid stalls on single-shard indices
+        shard_count = self._get_primary_shard_count()
+        eff_conc = min(requested_conc, shard_count) if shard_count > 0 else requested_conc
+
+        if self._debug:
+            try:
+                print(f"[OpenSearchAdapter] bulk params: requested_concurrency={requested_conc} effective_concurrency={eff_conc} shard_count={shard_count} chunk_size={chunk_size} max_chunk_bytes={max_chunk_bytes}")
+            except Exception:
+                pass
+
+        if eff_conc > 1:
+            # Consume parallel_bulk and collect success/error stats for diagnostics
+            ok_cnt = 0
+            err_cnt = 0
+            first_err = None
+            for ok, info in helpers.parallel_bulk(
                 self.client,
                 actions,
-                thread_count=concurrency,
+                thread_count=eff_conc,
                 chunk_size=chunk_size,
                 max_chunk_bytes=max_chunk_bytes,
                 request_timeout=self.timeout,
                 refresh=False,
             ):
-                pass
+                if ok:
+                    ok_cnt += 1
+                else:
+                    err_cnt += 1
+                    if first_err is None:
+                        first_err = info
+            if err_cnt and self._debug:
+                try:
+                    print(f"[OpenSearchAdapter] parallel_bulk finished ok={ok_cnt} err={err_cnt}; first_err={first_err}")
+                except Exception:
+                    print(f"[OpenSearchAdapter] parallel_bulk finished ok={ok_cnt} err={err_cnt}")
         else:
-            helpers.bulk(
-                self.client,
-                actions,
-                refresh=False,
-                request_timeout=self.timeout,
-                chunk_size=chunk_size,
-                max_chunk_bytes=max_chunk_bytes,
-            )
+            # Bulk with stats so we can see failures without raising
+            try:
+                succ, failed = helpers.bulk(
+                    self.client,
+                    actions,
+                    refresh=False,
+                    request_timeout=self.timeout,
+                    chunk_size=chunk_size,
+                    max_chunk_bytes=max_chunk_bytes,
+                    stats_only=True,
+                    raise_on_error=False,
+                    raise_on_exception=False,
+                )
+                if failed and self._debug:
+                    print(f"[OpenSearchAdapter] bulk finished succ={succ} failed={failed}")
+            except Exception as e:
+                # Ensure we surface the failure reason in debug mode
+                if self._debug:
+                    print(f"[OpenSearchAdapter] bulk error: {e}")
+                raise
         return len(actions)
 
     def search_vector(self, query_vec, top_k: int = 5) -> List[Dict[str, Any]]:
