@@ -52,6 +52,7 @@ class OpenSearchAdapter(VectorSearchAdapter):
         self.timeout = int(os.environ.get("OPENSEARCH_TIMEOUT", "20"))
         self._debug = os.environ.get("OPENSEARCH_DEBUG", "0") == "1"
         self._primary_shards = None  # cached primary shard count for effective concurrency
+        self._md_field_mode = "flattened"  # 'flattened' (preferred) or 'text' (fallback: chunk_metadata_text)
         if self._debug:
             host_env = (os.environ.get("OPENSEARCH_HOST", "") or "").rstrip("/")
             verify_env = os.environ.get("OPENSEARCH_VERIFY_CERTS", "1") != "0"
@@ -69,6 +70,46 @@ class OpenSearchAdapter(VectorSearchAdapter):
             return nsh if nsh > 0 else 1
         except Exception:
             return 1
+
+    def _cm_to_text(self, cm: Any) -> str:
+        """
+        Flatten chunk_metadata dict into a space-joined text suitable for 'chunk_metadata_text' field.
+        Keeps values and small key:value pairs; safe for clusters without 'flattened' type support.
+        """
+        try:
+            out: List[str] = []
+            def _walk(v, k=None):
+                if isinstance(v, dict):
+                    for kk, vv in v.items():
+                        _walk(vv, kk)
+                elif isinstance(v, list):
+                    for it in v:
+                        _walk(it, k)
+                else:
+                    try:
+                        sval = str(v)
+                    except Exception:
+                        sval = ""
+                    if sval:
+                        if k:
+                            out.append(f"{k}:{sval}")
+                        else:
+                            out.append(sval)
+            if isinstance(cm, dict):
+                _walk(cm)
+            else:
+                # attempt to parse string json
+                if isinstance(cm, str):
+                    import json as _json
+                    try:
+                        obj = _json.loads(cm)
+                        if isinstance(obj, dict):
+                            _walk(obj)
+                    except Exception:
+                        out.append(cm)
+            return " ".join([s for s in out if s])[:32766]
+        except Exception:
+            return ""
 
     def create_all_tables(self) -> None:
         """
@@ -181,6 +222,7 @@ class OpenSearchAdapter(VectorSearchAdapter):
                     "source": {"type": "keyword"},
                     "format": {"type": "keyword"},
                     "chunk_metadata": {"type": "flattened"},
+                    "chunk_metadata_text": {"type": "text"},
                     "vector": {
                         "type": "knn_vector",
                         "dimension": self.dim,
@@ -223,14 +265,41 @@ class OpenSearchAdapter(VectorSearchAdapter):
                 body=body,
                 params={"wait_for_active_shards": "1"}
             )
+            self._md_field_mode = "flattened"
             if self._debug:
                 try:
                     print(f"[OpenSearchAdapter] indices.create ack={resp.get('acknowledged')} shards_ack={resp.get('shards_acknowledged')} index={resp.get('index')}")
                 except Exception:
                     pass
         except Exception as e:
-            print(f"[OpenSearchAdapter] ERROR creating index '{self.index}': {e}")
-            raise
+            # Fallback for clusters that do not support 'flattened' mapping
+            emsg = str(e)
+            if "No handler for type [flattened]" in emsg or "mapper_parsing_exception" in emsg and "flattened" in emsg:
+                if self._debug:
+                    print(f"[OpenSearchAdapter] retrying without 'flattened' (fallback to chunk_metadata_text). Reason: {e}")
+                try:
+                    # Rebuild mapping: disable object indexing (no field explosion) and rely on 'chunk_metadata_text'
+                    props = body.get("mappings", {}).get("properties", {})
+                    if isinstance(props, dict):
+                        props["chunk_metadata"] = {"type": "object", "enabled": False}
+                        props["chunk_metadata_text"] = {"type": "text"}
+                    resp = self.client.indices.create(
+                        index=self.index,
+                        body=body,
+                        params={"wait_for_active_shards": "1"}
+                    )
+                    self._md_field_mode = "text"
+                    if self._debug:
+                        try:
+                            print(f"[OpenSearchAdapter] indices.create (fallback) ack={resp.get('acknowledged')} shards_ack={resp.get('shards_acknowledged')} index={resp.get('index')}")
+                        except Exception:
+                            pass
+                except Exception as e2:
+                    print(f"[OpenSearchAdapter] ERROR creating index '{self.index}' with fallback mapping: {e2}")
+                    raise
+            else:
+                print(f"[OpenSearchAdapter] ERROR creating index '{self.index}': {e}")
+                raise
         # Validate effective settings post-create; optionally enforce match
         try:
             s = self.client.indices.get_settings(index=self.index)
@@ -249,6 +318,18 @@ class OpenSearchAdapter(VectorSearchAdapter):
             enforce = str(os.environ.get("OPENSEARCH_ENFORCE_SHARDS", "0")).strip().lower() in ("1","true","yes","on","y")
             if enforce and ((want_shards and nsh != want_shards) or (want_repl and nrepl != want_repl)):
                 raise RuntimeError(f"Index created with unexpected shard/replica (got {nsh}/{nrepl}, wanted {want_shards}/{want_repl}). Check index templates or auto_create_index.")
+            # Detect mapping mode by inspecting mapping
+            try:
+                mp = self.client.indices.get_mapping(index=self.index)
+                mprops = (((mp or {}).get(self.index) or {}).get("mappings") or {}).get("properties") or {}
+                if "chunk_metadata_text" in mprops:
+                    self._md_field_mode = "text"
+                else:
+                    self._md_field_mode = "flattened"
+                if self._debug:
+                    print(f"[OpenSearchAdapter] metadata field mode = {self._md_field_mode}")
+            except Exception:
+                pass
         except Exception as es:
             print(f"[OpenSearchAdapter] WARN: could not validate index settings: {es}")
 
@@ -293,6 +374,13 @@ class OpenSearchAdapter(VectorSearchAdapter):
                 "chunk_metadata": ch.get("chunk_metadata") or {},
                 "vector": vec
             }
+            # Fallback metadata text for clusters without 'flattened' support
+            try:
+                cm_text_val = self._cm_to_text(ch.get("chunk_metadata") or {})
+                if cm_text_val:
+                    doc["chunk_metadata_text"] = cm_text_val
+            except Exception:
+                pass
             if doc_id is not None:
                 try:
                     doc["doc_id"] = int(doc_id)
@@ -509,10 +597,12 @@ class OpenSearchAdapter(VectorSearchAdapter):
         """
         # Build component queries
         q_text = {"match": {"text": {"query": query}}}
+        # Choose metadata fields based on mapping mode; fallback uses chunk_metadata_text
+        meta_fields = ["chunk_metadata", "chunk_metadata.*"] if getattr(self, "_md_field_mode", "flattened") == "flattened" else ["chunk_metadata_text"]
         q_meta = {
             "query_string": {
                 "query": query,
-                "fields": ["chunk_metadata", "chunk_metadata.*"],
+                "fields": meta_fields,
                 "lenient": True,
                 "default_operator": "AND"
             }
