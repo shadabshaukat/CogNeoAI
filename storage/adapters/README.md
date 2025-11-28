@@ -44,22 +44,45 @@ Adapters
 - index_chunks: not implemented (DB is system of record)
 
 3) OpenSearch (KNN) — storage/adapters/opensearch.py
-- Creates an index with mapping parity (create_all_tables):
-  - Fields: doc_id (long), chunk_index (integer), citation (keyword), text (text), source (keyword), format (keyword), chunk_metadata (object, enabled), vector (knn_vector with hnsw/cosinesimil)
-  - First-time index settings can be controlled via env:
+- Creates/ensures an index with parity fields and OpenSearch 3.x compatibility:
+  - Fields: doc_id (long), chunk_index (integer), citation (keyword), text (text), source (keyword), format (keyword), chunk_metadata (see below), vector (knn_vector with configurable method/space/engine)
+  - OpenSearch 3.x engine:
+    - Default engine is lucene (nmslib is deprecated for new index creation in 3.x)
+    - Configurable via env:
+      - OPENSEARCH_KNN_ENGINE: lucene (default) | faiss | nmslib (deprecated on 3.x)
+      - OPENSEARCH_KNN_METHOD: hnsw (default)
+      - OPENSEARCH_KNN_SPACE: cosinesimil (default) | l2 | innerproduct
+  - Metadata mapping without field explosion:
+    - Preferred: chunk_metadata: flattened (single field; avoids per-key dynamic mappings)
+    - Fallback (when flattened unsupported): chunk_metadata: { type: object, enabled: false } plus chunk_metadata_text: text
+      - Adapter auto-generates chunk_metadata_text from the dict at index time
+  - First-time index settings controlled via env:
     - OPENSEARCH_NUMBER_OF_SHARDS
     - OPENSEARCH_NUMBER_OF_REPLICAS
-    If the index already exists (indices.exists returns true), creation is skipped and existing settings/mappings are left unchanged. You can also pre-create the index manually; the adapter will use it as-is when OPENSEARCH_INDEX points to it.
+    - OPENSEARCH_ENFORCE_SHARDS=1 to fail-fast if templates/defaults override shard/replica counts
+    - OPENSEARCH_FORCE_RECREATE=1 to drop and recreate (danger: data loss) when changing shard count
+    If the index already exists, creation is skipped and existing settings/mappings are left unchanged. You can also pre-create the index manually; the adapter will use it as-is when OPENSEARCH_INDEX points to it.
 - Bulk indexing (index_chunks):
   - Accepts chunks + vectors aligned by position
-  - Supports parity fields in chunk dict: doc_id, chunk_index, text, chunk_metadata
-  - Computes stable _id="{doc_id}#{chunk_index}" when identifiers are present
-  - Computes citation="{source}#chunk{chunk_index}"
+  - Supports parity fields in chunk dict: doc_id, chunk_index, text, chunk_metadata; per-chunk source/format overrides are respected to enable cross-document bulks
+  - Computes stable _id="{doc_id}#{chunk_index}" when identifiers are present, else uses "{source}#{i}"
+  - Computes citation="{source}#chunk{chunk_index}" when identifiers are present
+  - High-throughput controls (env):
+    - OPENSEARCH_BULK_CHUNK_SIZE (docs/sub-request), OPENSEARCH_BULK_MAX_BYTES
+    - OPENSEARCH_BULK_CONCURRENCY (threads), OPENSEARCH_BULK_QUEUE_SIZE (producer queue feeding threads)
+    - OPENSEARCH_CONCURRENCY_OVERSUB (modest oversubscription vs primary shard count)
+    - OPENSEARCH_HTTP_COMPRESS=1 (HTTP compression for reduced wire size)
+  - Effective concurrency:
+    - effective_concurrency = min(OPENSEARCH_BULK_CONCURRENCY, primary_shards * OPENSEARCH_CONCURRENCY_OVERSUB)
+    - Prevents stalls on single-shard indices, scales with shard count
 - Search behavior:
   - search_vector: KNN over vector; returns doc_id, chunk_index, score=vector_score, bm25_score=0.0, citation, text, source, format, chunk_metadata
   - search_bm25: match on text; returns doc_id, chunk_index, score=bm25_score, bm25_score=1.0 presence signal, citation, text, source, format, chunk_metadata
   - search_hybrid: alpha-weighted fusion of normalized vector_score and bm25 presence; returns hybrid_score, citation, and parity fields
-  - search_fts: multi_match over text + chunk_metadata.*; returns doc_id, chunk_index, source, content/text, chunk_metadata, snippet=None, search_area="both"
+  - search_fts:
+    - When flattened mapping is active: queries over text + ["chunk_metadata", "chunk_metadata.*"]
+    - When fallback mapping is active: queries over text + ["chunk_metadata_text"] (single text field)
+    - Returns doc_id, chunk_index, source, content/text, chunk_metadata, snippet when available, and search_area
 
 Serving modes
 - DB as system of record (default):

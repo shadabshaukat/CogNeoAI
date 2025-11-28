@@ -19,6 +19,8 @@ def _os_client() -> OpenSearch:
         timeout=timeout,
         max_retries=max_retries,
         retry_on_timeout=True,
+        # Enable HTTP compression to reduce wire size during large bulks (beneficial on managed clusters/LBs)
+        http_compress=(os.environ.get("OPENSEARCH_HTTP_COMPRESS", "1") != "0"),
     )
     if user and pwd:
         kwargs["http_auth"] = (user, pwd)
@@ -350,8 +352,8 @@ class OpenSearchAdapter(VectorSearchAdapter):
             vec = vectors[i].tolist() if hasattr(vectors[i], "tolist") else list(vectors[i])
             doc_id = ch.get("doc_id")
             chunk_idx = ch.get("chunk_index")
-            source_val = source_path
-            fmt_val = fmt
+            source_val = ch.get("source", source_path)
+            fmt_val = ch.get("format", fmt)
 
             citation = None
             if doc_id is not None and chunk_idx is not None:
@@ -416,6 +418,11 @@ class OpenSearchAdapter(VectorSearchAdapter):
             max_chunk_bytes = int(os.environ.get("OPENSEARCH_BULK_MAX_BYTES", str(100 * 1024 * 1024)))
         except Exception:
             max_chunk_bytes = 100 * 1024 * 1024
+        # Queue size for producer -> bulk workers; higher can improve throughput on high-latency links
+        try:
+            queue_size = int(os.environ.get("OPENSEARCH_BULK_QUEUE_SIZE", "8"))
+        except Exception:
+            queue_size = 8
         # Optional parallel bulk concurrency for multi-shard clusters
         try:
             requested_conc = int(os.environ.get("OPENSEARCH_BULK_CONCURRENCY", "1"))
@@ -424,13 +431,20 @@ class OpenSearchAdapter(VectorSearchAdapter):
         if requested_conc <= 0:
             requested_conc = 1
 
-        # Cap concurrency by primary shard count to avoid stalls on single-shard indices
+        # Cap/oversubscribe concurrency relative to primary shard count (allows modest oversubscription if desired)
         shard_count = self._get_primary_shard_count()
-        eff_conc = min(requested_conc, shard_count) if shard_count > 0 else requested_conc
+        try:
+            oversub = int(os.environ.get("OPENSEARCH_CONCURRENCY_OVERSUB", "1"))
+        except Exception:
+            oversub = 1
+        if oversub <= 0:
+            oversub = 1
+        max_allowed = max(1, shard_count * oversub) if shard_count > 0 else requested_conc
+        eff_conc = min(requested_conc, max_allowed)
 
         if self._debug:
             try:
-                print(f"[OpenSearchAdapter] bulk params: requested_concurrency={requested_conc} effective_concurrency={eff_conc} shard_count={shard_count} chunk_size={chunk_size} max_chunk_bytes={max_chunk_bytes}")
+                print(f"[OpenSearchAdapter] bulk params: requested_concurrency={requested_conc} effective_concurrency={eff_conc} shard_count={shard_count} chunk_size={chunk_size} max_chunk_bytes={max_chunk_bytes} queue_size={queue_size} oversub={oversub}")
             except Exception:
                 pass
 
@@ -447,6 +461,7 @@ class OpenSearchAdapter(VectorSearchAdapter):
                 max_chunk_bytes=max_chunk_bytes,
                 request_timeout=self.timeout,
                 refresh=False,
+                queue_size=queue_size,
             ):
                 if ok:
                     ok_cnt += 1
