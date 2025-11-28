@@ -745,7 +745,7 @@ with gr.Blocks(title="CogNeo RAG UI") as demo:
                             f"{API_ROOT}/search/fts",
                             json={"query": q, "top_k": int(k), "mode": mode_val},
                             auth=SESS.auth,
-                            timeout=15
+                            timeout=int(os.environ.get("COGNEO_UI_HTTP_TIMEOUT", "60"))
                         )
                         resp.raise_for_status()
                         results = resp.json()
