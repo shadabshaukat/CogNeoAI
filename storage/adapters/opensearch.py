@@ -153,18 +153,59 @@ class OpenSearchAdapter(VectorSearchAdapter):
     def search_vector(self, query_vec, top_k: int = 5) -> List[Dict[str, Any]]:
         """
         KNN vector search using the configured vector field.
+        Tries modern top-level 'knn' syntax first, falls back to legacy 'query':{'knn':{...}} syntax for older clusters.
         """
-        body = {
+        qv = query_vec.tolist() if hasattr(query_vec, "tolist") else list(query_vec)
+        # Modern syntax (some OS versions accept top-level 'knn')
+        body_modern = {
             "size": top_k,
             "knn": {
                 "field": "vector",
-                "query_vector": query_vec.tolist() if hasattr(query_vec, "tolist") else list(query_vec),
+                "query_vector": qv,
                 "k": top_k,
                 "num_candidates": max(100, top_k * 10),
             },
             "_source": True
         }
-        res = self.client.search(index=self.index, body=body)
+        # Legacy syntax (OpenSearch 1.x/early 2.x) — variant A (field + query_vector)
+        body_legacy = {
+            "size": top_k,
+            "query": {
+                "knn": {
+                    "field": "vector",
+                    "query_vector": qv,
+                    "k": top_k,
+                    "num_candidates": max(100, top_k * 10),
+                }
+            },
+            "_source": True
+        }
+        # Legacy syntax variant B (older knn plugin shape: index 'vector' field object)
+        body_legacy_alt = {
+            "size": top_k,
+            "query": {
+                "knn": {
+                    "vector": {
+                        "vector": qv,
+                        "k": top_k
+                    }
+                }
+            },
+            "_source": True
+        }
+        try:
+            res = self.client.search(index=self.index, body=body_modern)
+        except Exception:
+            # Fallback to legacy knn query structures
+            try:
+                res = self.client.search(index=self.index, body=body_legacy)
+            except Exception:
+                try:
+                    res = self.client.search(index=self.index, body=body_legacy_alt)
+                except Exception:
+                    # As last resort, return empty hits to let callers degrade gracefully (e.g., hybrid -> BM25-only)
+                    return []
+
         hits = []
         for h in res.get("hits", {}).get("hits", []):
             s = h.get("_source", {})
