@@ -354,7 +354,11 @@ Behavior:
 - Any OpenSearch indexing error is logged as a warning; ingestion continues without failing.
 
 Notes:
-- Create the target OpenSearch index with the updated mapping (doc_id, chunk_index, citation, text, source, format, chunk_metadata, vector).
+- Non‑blocking: Dual‑write executes after the DB insert and never blocks ingestion. Any OpenSearch error is logged as a warning; the DB path proceeds.
+- No‑op when OPENSEARCH_* unset/invalid/unreachable: If required OpenSearch env is missing or the endpoint is not reachable, the worker skips the OS write (no exception is raised).
+- Index existence: The worker expects the target OpenSearch index to already exist. Create it manually or via tools/reindex_to_opensearch.py. The dual‑write path does NOT auto‑create the index.
+- First‑time index settings (when using the backfill tool to create the index): set OPENSEARCH_NUMBER_OF_SHARDS and OPENSEARCH_NUMBER_OF_REPLICAS in .env before running the tool; existing indices are left unchanged.
+- Tuning: OPENSEARCH_TIMEOUT and OPENSEARCH_MAX_RETRIES from .env apply to adapter calls; increase for high‑latency/managed clusters.
 - For one‑off population without touching ingest, use tools/reindex_to_opensearch.py (reads from DB, writes to OpenSearch).
 
 ## GPU starvation mitigation (very large workloads)

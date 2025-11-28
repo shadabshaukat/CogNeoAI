@@ -37,6 +37,9 @@ OpenSearch Backfill (tools/reindex_to_opensearch.py)
     - OPENSEARCH_HOST=http(s)://host:9200
     - OPENSEARCH_INDEX=cogneo_chunks_v2          # recommended new name if upgrading mapping
     - OPENSEARCH_USER / OPENSEARCH_PASS          # if required
+    - Optional first-time index settings (adapter-created only; ignored if index already exists):
+      - OPENSEARCH_NUMBER_OF_SHARDS
+      - OPENSEARCH_NUMBER_OF_REPLICAS
     - COGNEO_EMBED_DIM must match embedding dimension (e.g., 768)
 - Usage:
   ```bash

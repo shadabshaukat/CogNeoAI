@@ -136,4 +136,8 @@ def main(batch_size: int = 500) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        bs = int(os.environ.get("REINDEX_BATCH_SIZE", "500"))
+    except Exception:
+        bs = 500
+    main(batch_size=bs)

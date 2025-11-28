@@ -343,15 +343,26 @@ Environment (.env):
 - OPENSEARCH_HOST=http://localhost:9200
 - OPENSEARCH_INDEX=cogneo_chunks
 - Optional: OPENSEARCH_USER and OPENSEARCH_PASS
+- Optional (first-time index creation by adapter): OPENSEARCH_NUMBER_OF_SHARDS, OPENSEARCH_NUMBER_OF_REPLICAS
+- Tuning (client): OPENSEARCH_TIMEOUT=30, OPENSEARCH_MAX_RETRIES=3, OPENSEARCH_VERIFY_CERTS=1
 - Ensure COGNEO_EMBED_DIM matches your embedding model dimension (e.g., 768)
 
 Backfill from DB to OpenSearch index:
 - python tools/reindex_to_opensearch.py
-  - Streams Document + Embedding rows from the DB and indexes to OpenSearch via the new adapter.
+  - Streams Document + Embedding rows from the DB and indexes to OpenSearch via the adapter.
+  - Optional: REINDEX_BATCH_SIZE=1000 to increase streaming group size.
+  - First-time index creation honors OPENSEARCH_NUMBER_OF_SHARDS and OPENSEARCH_NUMBER_OF_REPLICAS; if the index already exists, it is used as-is (you may pre-create it manually).
 
 Notes:
 - Registry is lazy-loaded; OpenSearch is imported only when selected.
 - Hybrid/BM25/FTS are provided by the OpenSearch adapter. Vector KNN uses HNSW (cosine).
+
+Retrieval parity:
+
+- Vector search: HNSW cosine KNN over knn_vector; returns doc_id/chunk_index and vector_score.
+- BM25: match on text; output includes doc_id/chunk_index and a bm25 presence score (1.0) for hybrid fusion parity.
+- Hybrid: alpha-weighted fusion of normalized vector_score and bm25 presence identical to DB approach.
+- FTS: multi_match on text + chunk_metadata.*; parallels DB FTS over content and metadata fields conceptually. Scoring/ranking models aren't byte-identical across engines but response shape and functionality are aligned for UI/API.
 
 ---
 

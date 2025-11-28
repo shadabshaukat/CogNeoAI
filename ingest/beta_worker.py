@@ -48,6 +48,9 @@ from db.store import (
 )
 from db.connector import DB_URL, engine, BACKEND
 
+# Cached OpenSearch adapter for dual-write to reuse HTTP connection per worker
+_OS_ADAPTER = None  # type: ignore
+
 # Timeouts (seconds). Tunable via env.
 PARSE_TIMEOUT = int(os.environ.get("COGNEO_TIMEOUT_PARSE", "60"))
 CHUNK_TIMEOUT = int(os.environ.get("COGNEO_TIMEOUT_CHUNK", "90"))
@@ -446,8 +449,11 @@ def _db_insert_with_retry(
                         return_ids=True
                     )
                     try:
-                        from storage.adapters.opensearch import OpenSearchAdapter  # lazy import
-                        adapter = OpenSearchAdapter()
+                        global _OS_ADAPTER
+                        if _OS_ADAPTER is None:
+                            from storage.adapters.opensearch import OpenSearchAdapter  # lazy import
+                            _OS_ADAPTER = OpenSearchAdapter()
+                        adapter = _OS_ADAPTER
                         os_chunks: List[Dict[str, Any]] = []
                         for idx, ch in enumerate(chunks):
                             os_chunks.append({
@@ -456,7 +462,8 @@ def _db_insert_with_retry(
                                 "text": ch.get("text", ""),
                                 "chunk_metadata": ch.get("chunk_metadata") or {}
                             })
-                        adapter.index_chunks(os_chunks, vectors, source_path, fmt)
+                        if adapter:
+                            adapter.index_chunks(os_chunks, vectors, source_path, fmt)
                     except Exception as oe:
                         print(f"[beta_worker] WARN: dual-write to OpenSearch failed: {oe}", flush=True)
                     return inserted

@@ -98,6 +98,19 @@ class OpenSearchAdapter(VectorSearchAdapter):
                 }
             }
         }
+        # Optional shard/replica overrides from env
+        shards = os.environ.get("OPENSEARCH_NUMBER_OF_SHARDS")
+        replicas = os.environ.get("OPENSEARCH_NUMBER_OF_REPLICAS")
+        if shards:
+            try:
+                body["settings"]["index"]["number_of_shards"] = int(shards)
+            except Exception:
+                pass
+        if replicas:
+            try:
+                body["settings"]["index"]["number_of_replicas"] = int(replicas)
+            except Exception:
+                pass
         self.client.indices.create(index=self.index, body=body, ignore=400)
 
     def index_chunks(self, chunks: List[Dict[str, Any]], vectors, source_path: str, fmt: str) -> int:
@@ -158,7 +171,25 @@ class OpenSearchAdapter(VectorSearchAdapter):
 
         if not actions:
             return 0
-        helpers.bulk(self.client, actions, refresh=False, request_timeout=self.timeout)
+        # Bulk tuning via env:
+        # - OPENSEARCH_BULK_CHUNK_SIZE: number of docs per HTTP bulk sub-request (default 500)
+        # - OPENSEARCH_BULK_MAX_BYTES: max bytes per bulk sub-request (default 100MB)
+        try:
+            chunk_size = int(os.environ.get("OPENSEARCH_BULK_CHUNK_SIZE", "500"))
+        except Exception:
+            chunk_size = 500
+        try:
+            max_chunk_bytes = int(os.environ.get("OPENSEARCH_BULK_MAX_BYTES", str(100 * 1024 * 1024)))
+        except Exception:
+            max_chunk_bytes = 100 * 1024 * 1024
+        helpers.bulk(
+            self.client,
+            actions,
+            refresh=False,
+            request_timeout=self.timeout,
+            chunk_size=chunk_size,
+            max_chunk_bytes=max_chunk_bytes,
+        )
         return len(actions)
 
     def search_vector(self, query_vec, top_k: int = 5) -> List[Dict[str, Any]]:

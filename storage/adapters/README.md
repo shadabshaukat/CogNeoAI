@@ -46,6 +46,10 @@ Adapters
 3) OpenSearch (KNN) — storage/adapters/opensearch.py
 - Creates an index with mapping parity (create_all_tables):
   - Fields: doc_id (long), chunk_index (integer), citation (keyword), text (text), source (keyword), format (keyword), chunk_metadata (object, enabled), vector (knn_vector with hnsw/cosinesimil)
+  - First-time index settings can be controlled via env:
+    - OPENSEARCH_NUMBER_OF_SHARDS
+    - OPENSEARCH_NUMBER_OF_REPLICAS
+    If the index already exists (indices.exists returns true), creation is skipped and existing settings/mappings are left unchanged. You can also pre-create the index manually; the adapter will use it as-is when OPENSEARCH_INDEX points to it.
 - Bulk indexing (index_chunks):
   - Accepts chunks + vectors aligned by position
   - Supports parity fields in chunk dict: doc_id, chunk_index, text, chunk_metadata
