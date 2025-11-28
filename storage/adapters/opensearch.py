@@ -182,14 +182,34 @@ class OpenSearchAdapter(VectorSearchAdapter):
             max_chunk_bytes = int(os.environ.get("OPENSEARCH_BULK_MAX_BYTES", str(100 * 1024 * 1024)))
         except Exception:
             max_chunk_bytes = 100 * 1024 * 1024
-        helpers.bulk(
-            self.client,
-            actions,
-            refresh=False,
-            request_timeout=self.timeout,
-            chunk_size=chunk_size,
-            max_chunk_bytes=max_chunk_bytes,
-        )
+        # Optional parallel bulk concurrency for multi-shard clusters
+        try:
+            concurrency = int(os.environ.get("OPENSEARCH_BULK_CONCURRENCY", "1"))
+        except Exception:
+            concurrency = 1
+
+        if concurrency and concurrency > 1:
+            # Consume parallel_bulk generator of (success, info) tuples
+            # to dispatch multiple bulk requests concurrently (threaded).
+            for _ok, _info in helpers.parallel_bulk(
+                self.client,
+                actions,
+                thread_count=concurrency,
+                chunk_size=chunk_size,
+                max_chunk_bytes=max_chunk_bytes,
+                request_timeout=self.timeout,
+                refresh=False,
+            ):
+                pass
+        else:
+            helpers.bulk(
+                self.client,
+                actions,
+                refresh=False,
+                request_timeout=self.timeout,
+                chunk_size=chunk_size,
+                max_chunk_bytes=max_chunk_bytes,
+            )
         return len(actions)
 
     def search_vector(self, query_vec, top_k: int = 5) -> List[Dict[str, Any]]:

@@ -47,6 +47,41 @@ OpenSearch Backfill (tools/reindex_to_opensearch.py)
   source .env
   python3 -m tools.reindex_to_opensearch
   ```
+
+Performance on multi-shard clusters
+- Adapter parallel bulk (single-process, multithreaded)
+  - Controls: OPENSEARCH_BULK_CONCURRENCY (threads), OPENSEARCH_BULK_CHUNK_SIZE (docs), OPENSEARCH_BULK_MAX_BYTES (bytes)
+  - Recommendations:
+    - Start with OPENSEARCH_BULK_CONCURRENCY=2–4 on multi-shard indices
+    - Keep chunk size moderate (300–1000) as you raise concurrency to avoid overwhelming coordinator/bulk threadpools
+    - Increase OPENSEARCH_TIMEOUT (e.g., 60–120) and OPENSEARCH_MAX_RETRIES (e.g., 5–8) for high-latency managed clusters
+    - For very heavy one-off loads, consider temporarily setting index replicas=0 and restoring after the load (manual cluster op)
+
+- Multi-process partitioning (horizontal scaling)
+  - Environment variables:
+    - REINDEX_PARTITIONS=N            # total partitions
+    - REINDEX_PARTITION_ID=K          # 0-based partition id for this process
+    - REINDEX_BATCH_SIZE=500          # stream size from DB to OS per flush (optional)
+  - Example (4 parallel processes on the same machine or different machines):
+    ```bash
+    # process 0
+    REINDEX_PARTITIONS=4 REINDEX_PARTITION_ID=0 OPENSEARCH_BULK_CONCURRENCY=3 python3 -m tools.reindex_to_opensearch
+    # process 1
+    REINDEX_PARTITIONS=4 REINDEX_PARTITION_ID=1 OPENSEARCH_BULK_CONCURRENCY=3 python3 -m tools.reindex_to_opensearch
+    # process 2
+    REINDEX_PARTITIONS=4 REINDEX_PARTITION_ID=2 OPENSEARCH_BULK_CONCURRENCY=3 python3 -m tools.reindex_to_opensearch
+    # process 3
+    REINDEX_PARTITIONS=4 REINDEX_PARTITION_ID=3 OPENSEARCH_BULK_CONCURRENCY=3 python3 -m tools.reindex_to_opensearch
+    ```
+  - Under the hood, the tool partitions rows by doc_id % REINDEX_PARTITIONS == REINDEX_PARTITION_ID and streams each partition independently.
+  - Tune REINDEX_BATCH_SIZE (DB stream group) alongside OPENSEARCH_BULK_CHUNK_SIZE/MAX_BYTES (HTTP bulk group) for best throughput.
+
+- Checklist for high-throughput loads
+  - Pre-size shards and replicas for target volume (first-time creation via OPENSEARCH_NUMBER_OF_SHARDS/REPLICAS)
+  - Disable replicas temporarily if allowed, re-enable after (cluster setting)
+  - Warm I/O and increase OS client timeout/retries for managed endpoints
+  - Monitor OpenSearch bulk/threadpool queues and adjust concurrency/chunk sizes accordingly
+
 - Migration tip:
   - If you previously created an OpenSearch index without doc_id/chunk_index/citation, create a new index (e.g., cogneo_chunks_v2) and run the backfill tool again.
 

@@ -87,8 +87,24 @@ def main(batch_size: int = 500) -> None:
         q = (
             s.query(Embedding, Document)
              .join(Document, Embedding.doc_id == Document.id)
-             .order_by(Embedding.doc_id, Embedding.chunk_index)
         )
+
+        # Optional partitioning for parallel runs: process only rows where
+        # doc_id % REINDEX_PARTITIONS == REINDEX_PARTITION_ID
+        # Example:
+        #   REINDEX_PARTITIONS=4 REINDEX_PARTITION_ID=0 python3 -m tools.reindex_to_opensearch
+        #   REINDEX_PARTITIONS=4 REINDEX_PARTITION_ID=1 python3 -m tools.reindex_to_opensearch
+        #   ...
+        # SQLAlchemy will translate modulo appropriately for Postgres/Oracle dialects.
+        try:
+            _parts = int(os.environ.get("REINDEX_PARTITIONS", "0"))
+            _pid = int(os.environ.get("REINDEX_PARTITION_ID", "0"))
+        except Exception:
+            _parts, _pid = 0, 0
+        if _parts and _parts > 1:
+            q = q.filter((Embedding.doc_id % _parts) == _pid)
+
+        q = q.order_by(Embedding.doc_id, Embedding.chunk_index)
 
         cur_chunks: List[Dict[str, Any]] = []
         cur_vecs: List[List[float]] = []
