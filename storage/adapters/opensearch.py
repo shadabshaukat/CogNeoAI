@@ -306,37 +306,81 @@ class OpenSearchAdapter(VectorSearchAdapter):
     def search_fts(self, query: str, top_k: int = 10, mode: str = "both") -> List[Dict[str, Any]]:
         """
         Full text search across chunk text and metadata fields.
+        - mode: "documents" -> search only text
+                "metadata"  -> search only chunk_metadata.*
+                "both" (default) -> search both with a boolean should clause
+        Adds snippet from highlight(text) when available.
+        Falls back to text-only match when no hits are found (to align UX with Postgres/Oracle behavior).
         """
+        # Build component queries
+        q_text = {"match": {"text": {"query": query}}}
+        q_meta = {
+            "query_string": {
+                "query": query,
+                "fields": ["chunk_metadata.*"],
+                "lenient": True,
+                "default_operator": "AND"
+            }
+        }
+        mode_lc = (mode or "both").strip().lower()
+        if mode_lc == "documents":
+            q = q_text
+        elif mode_lc == "metadata":
+            q = q_meta
+        else:
+            q = {"bool": {"should": [q_text, q_meta], "minimum_should_match": 1}}
+            mode_lc = "both"
+
         body = {
             "size": top_k,
-            "query": {
-                "multi_match": {
-                    "query": query,
-                    "fields": ["text^2", "chunk_metadata.*"]
-                }
-            },
-            "_source": True
+            "query": q,
+            "_source": True,
+            "highlight": {"fields": {"text": {}}}
         }
+
+        def _to_results(resp, search_area: str) -> List[Dict[str, Any]]:
+            out: List[Dict[str, Any]] = []
+            for h in resp.get("hits", {}).get("hits", []):
+                s = h.get("_source", {})
+                hl = h.get("highlight", {}) or {}
+                snippet = None
+                if isinstance(hl.get("text"), list) and hl["text"]:
+                    snippet = hl["text"][0]
+                out.append({
+                    "doc_id": s.get("doc_id"),
+                    "chunk_index": s.get("chunk_index"),
+                    "source": s.get("source"),
+                    "content": s.get("text"),
+                    "text": s.get("text"),
+                    "chunk_metadata": s.get("chunk_metadata"),
+                    "snippet": snippet,
+                    "search_area": search_area
+                })
+            return out[:top_k]
+
         try:
             res = self.client.search(index=self.index, body=body, request_timeout=self.timeout)
+            results = _to_results(res, mode_lc)
+            # Fallback to text-only match if no hits (improves robustness when metadata fields are not text-mapped)
+            if not results and mode_lc != "documents":
+                fb_body = {
+                    "size": top_k,
+                    "query": q_text,
+                    "_source": True,
+                    "highlight": {"fields": {"text": {}}}
+                }
+                try:
+                    fb_res = self.client.search(index=self.index, body=fb_body, request_timeout=self.timeout)
+                    results = _to_results(fb_res, "documents")
+                except Exception as e2:
+                    if self._debug:
+                        print(f"[OpenSearchAdapter] FTS fallback error on index={self.index}: {e2}")
+                    results = []
+            return results
         except Exception as e:
             if self._debug:
                 print(f"[OpenSearchAdapter] FTS search error on index={self.index}: {e}")
             return []
-        out = []
-        for h in res.get("hits", {}).get("hits", []):
-            s = h.get("_source", {})
-            out.append({
-                "doc_id": s.get("doc_id"),
-                "chunk_index": s.get("chunk_index"),
-                "source": s.get("source"),
-                "content": s.get("text"),
-                "text": s.get("text"),
-                "chunk_metadata": s.get("chunk_metadata"),
-                "snippet": None,
-                "search_area": "both"
-            })
-        return out[:top_k]
 
     def search_hybrid(self, query: str, top_k: int = 5, alpha: float = 0.5) -> List[Dict[str, Any]]:
         """
