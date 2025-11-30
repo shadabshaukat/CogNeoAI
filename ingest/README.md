@@ -35,29 +35,34 @@ Usage
 Full ingest (auto GPU detect)
 ```bash
 python3 -m ingest.os_orchestrator \
-  --root "/abs/path/to/corpus" \
+  --root "/home/ubuntu/Data_for_Beta_Launch" \
   --session "os-full-$(date +%Y%m%d-%H%M%S)" \
   --model "nomic-ai/nomic-embed-text-v1.5" \
-  --log_dir "./logs"
+  --target_tokens 3000 --overlap_tokens 250 --max_tokens 3500 \
+  --log_dir "/home/ubuntu/CogNeoAI/logs"
 ```
 
 Resume (skip files found in any *.success.log under --log_dir)
 ```bash
 python3 -m ingest.os_orchestrator \
-  --root "/data/corpus" \
-  --session "os-resume-$(date +%Y%m%d-%H%M%S)" \
-  --resume \
-  --log_dir "./logs"
+  --root "/home/ubuntu/Data_for_Beta_Launch" \
+  --session "os-full-$(date +%Y%m%d-%H%M%S)" \
+  --model "nomic-ai/nomic-embed-text-v1.5" \
+  --target_tokens 3000 --overlap_tokens 250 --max_tokens 3500 \
+  --log_dir "/home/ubuntu/CogNeoAI/logs" \
+  --resume 
 # Or enable resume via env for workers: OS_RESUME_FROM_LOGS=1
 ```
 
 Sample/preview (one file per folder; skip year dirs)
 ```bash
 python3 -m ingest.os_orchestrator \
-  --root "/data/corpus" \
-  --session "os-sample" \
-  --sample_per_folder \
-  --log_dir "./logs"
+  --root "/home/ubuntu/Data_for_Beta_Launch" \
+  --session "os-full-$(date +%Y%m%d-%H%M%S)" \
+  --model "nomic-ai/nomic-embed-text-v1.5" \
+  --target_tokens 3000 --overlap_tokens 250 --max_tokens 3500 \
+  --log_dir "/home/ubuntu/CogNeoAI/logs" \
+  --sample_per_folder 
 ```
 
 Options and tuning
