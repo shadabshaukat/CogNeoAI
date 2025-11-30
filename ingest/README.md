@@ -13,6 +13,109 @@ Key modules
 - Database: db/connector.py, db/store.py
 - Reference doc: docs/BetaDataLoad.md (end-to-end guide)
 
+## OpenSearch Full Ingestion (Direct to OpenSearch, DB-less)
+
+New modules
+- Orchestrator: ingest/os_orchestrator.py
+- Worker: ingest/os_worker.py
+
+Overview
+- End-to-end ingestion directly from files to OpenSearch (no database used).
+- CPU/GPU pipelined design mirroring the Beta pipeline:
+  - CPU process pool parses and semantically chunks (.txt/.html)
+  - Main process performs GPU batched embeddings (Embedder)
+  - Batches are accumulated and bulk indexed to OpenSearch via the adapter’s index_chunks()
+- Supports:
+  - Resume mode (skip previously completed files)
+  - Structured metrics export (NDJSON)
+  - Optional OpenSearch-backed KV state for session/file progress (DB-like progress without a DB)
+
+Usage
+
+Full ingest (auto GPU detect)
+```bash
+python3 -m ingest.os_orchestrator \
+  --root "/abs/path/to/corpus" \
+  --session "os-full-$(date +%Y%m%d-%H%M%S)" \
+  --model "nomic-ai/nomic-embed-text-v1.5" \
+  --log_dir "./logs"
+```
+
+Resume (skip files found in any *.success.log under --log_dir)
+```bash
+python3 -m ingest.os_orchestrator \
+  --root "/data/corpus" \
+  --session "os-resume-$(date +%Y%m%d-%H%M%S)" \
+  --resume \
+  --log_dir "./logs"
+# Or enable resume via env for workers: OS_RESUME_FROM_LOGS=1
+```
+
+Sample/preview (one file per folder; skip year dirs)
+```bash
+python3 -m ingest.os_orchestrator \
+  --root "/data/corpus" \
+  --session "os-sample" \
+  --sample_per_folder \
+  --log_dir "./logs"
+```
+
+Options and tuning
+- Shards and dynamic scheduling:
+  - --shards 0 (default GPUs*4), dynamic work-stealing across GPUs
+  - --balance_by_size enables greedy bin-packing by file size (auto-enables on skew)
+- Embedding/CPU pipeline:
+  - COGNEO_CPU_WORKERS=8..12 on larger hosts
+  - COGNEO_PIPELINE_PREFETCH=128..256 to keep GPUs fed
+  - COGNEO_EMBED_BATCH tuned to VRAM (64–256 typical)
+- OpenSearch bulk tuning (adapter controls):
+  - OPENSEARCH_BULK_CHUNK_SIZE, OPENSEARCH_BULK_MAX_BYTES
+  - OPENSEARCH_BULK_CONCURRENCY, OPENSEARCH_BULK_QUEUE_SIZE, OPENSEARCH_CONCURRENCY_OVERSUB
+  - Consider OPENSEARCH_TUNE_INDEX=1 during large loads (refresh=-1, replicas=0) and restore after (handled by orchestrator)
+
+Resume mode (details)
+- If --resume (or OS_RESUME_FROM_LOGS=1) is enabled, os_worker scans all *.success.log files under --log_dir and skips those paths.
+- Works per worker and across sessions when logs are shared in the same --log_dir.
+- Tip: keep a consistent logs directory for reliable resume behavior.
+
+Metrics and error logs (NDJSON)
+- OS_METRICS_NDJSON=1 writes per-file structured metrics to {session}.metrics.ndjson:
+  - status, chunks, text_len, parse_ms, chunk_ms, embed_ms, index_ms, timestamps
+- COGNEO_ERROR_DETAILS=1 writes error records to {session}.errors.ndjson (COGNEO_ERROR_TRACE=1 to include Python tracebacks).
+- The classic per-file TSV line is still appended to {child}.success.log for quick inspection.
+
+OpenSearch-backed session progress (optional)
+- OS_INGEST_STATE_ENABLE=1 enables a lightweight KV progress log in OpenSearch (no DB required).
+- Index name: OPENSEARCH_INGEST_STATE_INDEX (default: cogneo_ingest_state); auto-created with a simple mapping.
+- Recorded docs:
+  - {session}::summary (type=session): total files, running/complete status, files_ok, files_failed, total_indexed, timestamps
+  - {session}::{file} (type=file): status per file (pending/complete/error) with basic metrics
+- Used for live dashboards or to monitor ingestion in distributed environments.
+
+Environment variables (selected)
+- New (for direct OS full ingest):
+  - OPENSEARCH_INGEST_BATCH_SIZE (default 1000) — accumulation across files before index_chunks()
+  - OS_RESUME_FROM_LOGS=1 — enable resume without CLI flag
+  - OS_METRICS_NDJSON=1 — enable structured metrics NDJSON
+  - OS_INGEST_STATE_ENABLE=1 — enable OS-backed KV tracking
+  - OPENSEARCH_INGEST_STATE_INDEX=cogneo_ingest_state — state index name
+- Existing (reused):
+  - OPENSEARCH_* (HOST, INDEX, USER, PASS, TIMEOUT, RETRIES, VERIFY_CERTS, HTTP_COMPRESS, DEBUG)
+  - OPENSEARCH_NUMBER_OF_SHARDS, OPENSEARCH_NUMBER_OF_REPLICAS, OPENSEARCH_FORCE_RECREATE, OPENSEARCH_ENFORCE_SHARDS
+  - OPENSEARCH_BULK_CHUNK_SIZE, OPENSEARCH_BULK_MAX_BYTES, OPENSEARCH_BULK_CONCURRENCY, OPENSEARCH_BULK_QUEUE_SIZE, OPENSEARCH_CONCURRENCY_OVERSUB
+  - OPENSEARCH_KNN_ENGINE, OPENSEARCH_KNN_SPACE, OPENSEARCH_KNN_METHOD
+  - COGNEO_EMBED_MODEL, COGNEO_EMBED_DIM, COGNEO_EMBED_BATCH
+  - COGNEO_CPU_WORKERS, COGNEO_PIPELINE_PREFETCH, COGNEO_SORT_WORKER_FILES
+  - COGNEO_TIMEOUT_PARSE, COGNEO_TIMEOUT_CHUNK, COGNEO_TIMEOUT_EMBED_BATCH
+
+Notes
+- Ensure COGNEO_EMBED_DIM matches the embedding model (e.g., 768 for nomic v1.5) and OpenSearch mapping dimension.
+- For first-time index creation, set OPENSEARCH_NUMBER_OF_SHARDS/REPLICAS before running; shard count cannot be changed after creation (use a new index or FORCE_RECREATE=1).
+- For very large corpora on managed clusters, consider:
+  - OPENSEARCH_TIMEOUT=60–120, OPENSEARCH_MAX_RETRIES=5–8
+  - OPENSEARCH_TUNE_INDEX=1 during ingest, then restore (handled automatically by the orchestrator)
+  - Raising bulk concurrency moderately and watching cluster threadpools.
+
 
 ## Capabilities
 
