@@ -171,8 +171,7 @@ Other helpful docs:
 
 ## Architecture and Workflow
 
-<img width="1523" height="882" alt="CogNeoAI" src="https://github.com/user-attachments/assets/d8ee6b1e-403a-4329-b62e-405d068319d4" />
-
+<img width="1523" height="882" alt="CogNeoAI_v2" src="https://github.com/user-attachments/assets/d9a33b33-b673-4727-81d7-f6aaa55b40d5" />
 
 ### System Overview
 
@@ -446,6 +445,9 @@ Authentication:
 ---
 
 ## API Testing via curl (Complete)
+
+<img width="832" height="432" alt="CogNeoAI_Curl" src="https://github.com/user-attachments/assets/c6c63b4c-b6cb-4038-986a-37ad8732c8c2" />
+
 
 Auth
 - Basic (default): use -u FASTAPI_API_USER:FASTAPI_API_PASS (defaults legal_api:letmein)
