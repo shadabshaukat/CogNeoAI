@@ -171,7 +171,8 @@ Other helpful docs:
 
 ## Architecture and Workflow
 
-<img width="2548" height="2114" alt="AusLegalSearchv3" src="https://github.com/user-attachments/assets/d90a5d18-d769-44b9-a6b8-5e75ba47727c" />
+<img width="1523" height="882" alt="CogNeoAI" src="https://github.com/user-attachments/assets/d8ee6b1e-403a-4329-b62e-405d068319d4" />
+
 
 ### System Overview
 
